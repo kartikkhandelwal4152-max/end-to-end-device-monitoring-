@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel · Endpoint Monitor</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="/static/style.css" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script defer src="/static/app.js"></script>
+</head>
+<body>
+<header><a class="brand" href="/">◈ SENTINEL <span>ENDPOINT SECURITY</span></a><span class="tag">PROJECT PROTOTYPE</span></header>
+<main>
+<section class="intro"><div><p class="eyebrow">SECURITY OPERATIONS / OVERVIEW</p><h1>Your endpoints.<br><span>One clear view.</span></h1><p class="muted">System telemetry, behavioral signals, and alerts in one place.</p></div><div class="status" id="status" role="status" aria-live="polite">Authentication required</div></section>
+<form id="login" class="panel login"><label for="token">Administrator token</label><div class="inline"><input id="token" type="password" autocomplete="off" placeholder="Paste the token from server initialization" required><button type="submit">Connect dashboard →</button></div><small>Token stays in memory for this tab. Refreshing the page clears it.</small></form>
+<div id="workspace" hidden>
+<div class="toolbar"><p class="muted" id="updated"></p><button id="logout" class="secondary">Disconnect</button></div>
+<section class="stats"><article class="panel"><span>REGISTERED ENDPOINTS</span><strong id="total">0</strong></article><article class="panel"><span>ONLINE NOW</span><strong class="green" id="online">0</strong></article><article class="panel"><span>OPEN ALERTS</span><strong class="orange" id="alerts-count">0</strong></article><article class="panel"><span>TRAINED MODELS</span><strong id="trained">0</strong></article></section>
+<section class="panel"><div class="heading"><div><p class="eyebrow">FLEET HEALTH</p><h2>Monitored devices</h2></div><span class="muted">Online = seen within 60 seconds</span></div><div class="table-wrap"><table><thead><tr><th>Device</th><th>Status</th><th>CPU</th><th>RAM</th><th>Connections</th><th>Detection model</th></tr></thead><tbody id="devices"></tbody></table></div><p id="no-devices" class="empty" hidden>No endpoints yet. Register a device and start its agent, or run the demo.</p></section>
+<section class="panel"><div class="heading"><div><p class="eyebrow">RESOURCE ACTIVITY</p><h2>Endpoint timeline</h2></div><select id="device-select" aria-label="Select endpoint"></select></div><p id="chart-message" class="muted"></p><div class="chart"><canvas id="metrics" aria-label="CPU and memory utilization over time" role="img"></canvas></div><div id="coverage" class="coverage"></div><details><summary>Latest process inventory (up to 100)</summary><ul id="processes"></ul></details></section>
+<section class="panel"><div class="heading"><div><p class="eyebrow">INVESTIGATION QUEUE</p><h2>Recent security alerts</h2></div><span class="muted">Latest 100 · refreshes every 5 seconds</span></div><div id="alert-list"></div><p id="no-alerts" class="empty">No alerts to review.</p></section>
+</div>
+<footer>Sentinel / Academic prototype <span>Anomalies are investigation signals, not confirmed attacks.</span></footer>
+</main>
+</body></html>
