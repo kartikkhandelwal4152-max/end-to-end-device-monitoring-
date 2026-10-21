@@ -26,5 +26,17 @@ if [ -n "$SENTINEL_DEFAULT_DEVICE" ]; then
     fi
 fi
 
+# Pre-register additional devices if specified (comma-separated: DEVICE-01,DEVICE-02)
+if [ -n "$SENTINEL_EXTRA_DEVICES" ]; then
+    echo "===> Registering additional devices..."
+    echo "$SENTINEL_EXTRA_DEVICES" | tr ',' '\n' | while read -r dev; do
+        dev=$(echo "$dev" | tr -d ' \r\n')
+        if [ -n "$dev" ]; then
+            echo "--- Registering $dev ---"
+            python server.py --data-dir "$DATA_DIR" register "$dev"
+        fi
+    done
+fi
+
 echo "===> Starting Sentinel backend on ${HOST:-0.0.0.0}:${PORT:-8000}..."
 exec python server.py --data-dir "$DATA_DIR" serve --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}"

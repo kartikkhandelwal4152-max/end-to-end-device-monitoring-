@@ -227,6 +227,20 @@ def create_app(directory=DATA):
                 abort(404, 'Alert not found.')
         return jsonify(status='acknowledged')
 
+    @app.post('/api/devices/register')
+    @admin
+    def api_register_device():
+        data = request.get_json(silent=True) or {}
+        device_id = data.get('device_id', '').strip()
+        custom_token = data.get('token')
+        if not device_id:
+            abort(400, 'device_id is required.')
+        try:
+            device_token = register(directory, device_id, custom_token)
+            return jsonify(status='registered', device_id=device_id, token=device_token), 201
+        except ValueError as exc:
+            abort(400, str(exc))
+
     return app
 
 

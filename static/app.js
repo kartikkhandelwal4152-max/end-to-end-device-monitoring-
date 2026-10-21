@@ -3,8 +3,10 @@ let token = '', timer = null, chart = null, busy = false;
 const $ = id => document.getElementById(id);
 const text = (tag, value, cls) => { const e=document.createElement(tag); e.textContent=value; if(cls)e.className=cls; return e; };
 const time = value => new Date(value*1000).toLocaleString();
-async function api(path, method='GET') {
-  const response=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});
+async function api(path, method='GET', body=null) {
+  const headers = { Authorization: 'Bearer ' + token };
+  if (body) headers['Content-Type'] = 'application/json';
+  const response = await fetch(path, { method, headers, body });
   if(!response.ok) { if(response.status===401)disconnect(); throw new Error(response.status===401?'Invalid administrator token.':'Request failed ('+response.status+').'); }
   return response.json();
 }
@@ -14,6 +16,37 @@ $('login').addEventListener('submit',async event=>{
   event.preventDefault();token=$('token').value.trim();$('token').value='';
   try{await refresh();$('workspace').hidden=false;$('login').hidden=true;clearInterval(timer);timer=setInterval(()=>refresh().catch(showError),5000);}catch(e){showError(e);}
 });
+const regForm = $('register-device-form');
+if (regForm) {
+  regForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const devInput = $('new-device-id');
+    const device_id = devInput.value.trim();
+    const regStatus = $('reg-status');
+    regStatus.textContent = 'Registering...';
+    try {
+      const res = await api('/api/devices/register', 'POST', JSON.stringify({ device_id }));
+      regStatus.textContent = 'Registered: ' + res.device_id;
+      $('new-device-token-val').textContent = res.token;
+      $('new-device-token-card').hidden = false;
+      devInput.value = '';
+      await refresh();
+    } catch (err) {
+      regStatus.textContent = err.message;
+    }
+  });
+}
+const copyBtn = $('copy-token-btn');
+if (copyBtn) {
+  copyBtn.addEventListener('click', () => {
+    const val = $('new-device-token-val').textContent;
+    if (val) {
+      navigator.clipboard.writeText(val);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy Token'; }, 2000);
+    }
+  });
+}
 function showError(error){$('status').textContent=error.message+' Displayed data may be stale.';}
 $('device-select').addEventListener('change',()=>history().catch(showError));
 async function refresh(){

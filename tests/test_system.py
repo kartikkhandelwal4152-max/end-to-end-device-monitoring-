@@ -89,3 +89,15 @@ def test_collector():
     data=Collector().sample()
     assert 0<=data['cpu']<=100 and 0<=data['ram']<=100
     assert data['failed_logins'] is None and len(data['processes'])<=100
+
+def test_device_api_registration(setup):
+    _, c, a, d = setup
+    assert c.post('/api/devices/register', json={'device_id': 'NEW-DEV'}).status_code == 401
+    assert c.post('/api/devices/register', headers=d, json={'device_id': 'NEW-DEV'}).status_code == 401
+    res = c.post('/api/devices/register', headers=a, json={'device_id': 'NEW-DEV'})
+    assert res.status_code == 201
+    data = res.get_json()
+    assert data['device_id'] == 'NEW-DEV' and len(data['token']) > 20
+    res2 = c.post('/api/devices/register', headers=a, json={'device_id': 'NEW-DEV-2', 'token': 'fixed-token-12345'})
+    assert res2.status_code == 201
+    assert res2.get_json()['token'] == 'fixed-token-12345'
