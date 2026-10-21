@@ -241,6 +241,20 @@ def create_app(directory=DATA):
         except ValueError as exc:
             abort(400, str(exc))
 
+    @app.delete('/api/devices/<device_id>')
+    @admin
+    def delete_device(device_id):
+        with lock, connect(path) as db:
+            device = db.execute('SELECT id FROM devices WHERE id=?', (device_id,)).fetchone()
+            if not device:
+                abort(404, 'Device not found.')
+            db.execute('DELETE FROM telemetry WHERE device_id=?', (device_id,))
+            db.execute('DELETE FROM alerts WHERE device_id=?', (device_id,))
+            db.execute('DELETE FROM models WHERE device_id=?', (device_id,))
+            db.execute('DELETE FROM devices WHERE id=?', (device_id,))
+            cache.pop(device_id, None)
+        return jsonify(status='deleted', device_id=device_id)
+
     return app
 
 
@@ -284,6 +298,7 @@ def main():
     subs.add_parser('init')
     reg = subs.add_parser('register'); reg.add_argument('device'); reg.add_argument('--token', default=None)
     revoke = subs.add_parser('rotate'); revoke.add_argument('device')
+    del_p = subs.add_parser('delete'); del_p.add_argument('device')
     training = subs.add_parser('train'); training.add_argument('device'); training.add_argument('--limit', type=int, default=1000)
     subs.add_parser('demo')
     serve = subs.add_parser('serve'); serve.add_argument('--host', default=os.environ.get('HOST', '127.0.0.1')); serve.add_argument('--port', type=int, default=int(os.environ.get('PORT', 8000)))
@@ -299,6 +314,14 @@ def main():
                 cur = db.execute('UPDATE devices SET token_hash=? WHERE id=?', (digest(token), args.device))
                 if not cur.rowcount: raise ValueError('Unknown device')
             print('NEW DEVICE TOKEN:\n'+token)
+        elif args.command == 'delete':
+            with connect(args.data_dir/'sentinel.db') as db:
+                db.execute('DELETE FROM telemetry WHERE device_id=?', (args.device,))
+                db.execute('DELETE FROM alerts WHERE device_id=?', (args.device,))
+                db.execute('DELETE FROM models WHERE device_id=?', (args.device,))
+                cur = db.execute('DELETE FROM devices WHERE id=?', (args.device,))
+                if not cur.rowcount: raise ValueError('Unknown device')
+            print('Deleted device: '+args.device)
         elif args.command == 'train':
             print(f'Trained on {train_device(args.data_dir, args.device, args.limit)} samples.')
         elif args.command == 'demo':

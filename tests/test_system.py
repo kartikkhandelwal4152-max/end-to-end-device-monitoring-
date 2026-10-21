@@ -101,3 +101,15 @@ def test_device_api_registration(setup):
     res2 = c.post('/api/devices/register', headers=a, json={'device_id': 'NEW-DEV-2', 'token': 'fixed-token-12345'})
     assert res2.status_code == 201
     assert res2.get_json()['token'] == 'fixed-token-12345'
+
+def test_delete_device(setup):
+    _, c, a, d = setup
+    assert c.delete('/api/devices/LAPTOP-01').status_code == 401
+    assert c.delete('/api/devices/LAPTOP-01', headers=d).status_code == 401
+    assert c.delete('/api/devices/NONEXISTENT', headers=a).status_code == 404
+    res = c.delete('/api/devices/LAPTOP-01', headers=a)
+    assert res.status_code == 200
+    assert res.get_json()['status'] == 'deleted'
+    overview = c.get('/api/overview', headers=a).get_json()
+    assert not any(dev['id'] == 'LAPTOP-01' for dev in overview['devices'])
+

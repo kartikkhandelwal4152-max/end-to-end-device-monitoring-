@@ -61,6 +61,17 @@ async function refresh(){
     for(const d of data.devices){
       const row=text('tr','');row.append(text('td',d.id));const state=text('td','');state.append(text('span',d.online?'Online':'Offline',d.online?'pill online':'pill'));row.append(state);
       row.append(text('td',d.latest?d.latest.cpu.toFixed(1)+'%':'—'),text('td',d.latest?d.latest.ram.toFixed(1)+'%':'—'),text('td',d.latest?.connections??'Unavailable'),text('td',d.model?'Trained · '+d.model.sample_count+' samples':'Not trained'));
+      const actionTd=text('td','');
+      const delBtn=text('button','Delete','secondary');
+      delBtn.style.padding='4px 8px';delBtn.style.fontSize='11px';delBtn.style.color='#ff9999';delBtn.style.borderColor='#ff444455';
+      delBtn.addEventListener('click',async e=>{
+        e.stopPropagation();
+        if(confirm('Remove endpoint "'+d.id+'" from Sentinel?')){
+          delBtn.disabled=true;
+          try{await api('/api/devices/'+encodeURIComponent(d.id),'DELETE');await refresh();}catch(err){delBtn.disabled=false;showError(err);}
+        }
+      });
+      actionTd.append(delBtn);row.append(actionTd);
       $('devices').append(row);const option=text('option',d.id);option.value=d.id;$('device-select').append(option);
     }
     if(data.devices.some(d=>d.id===selected))$('device-select').value=selected;
