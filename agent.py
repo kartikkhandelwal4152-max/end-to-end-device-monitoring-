@@ -108,6 +108,7 @@ def main():
     parser.add_argument('--allow-local-http', action='store_true')
     parser.add_argument('--once', action='store_true')
     args = parser.parse_args()
+    args.server = args.server.rstrip('/\\')
     try:
         validate_url(args.server, args.allow_local_http)
         if not 1 <= args.interval <= 300:
