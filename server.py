@@ -66,12 +66,12 @@ def initialize(directory):
     return token
 
 
-def register(directory, device_id):
+def register(directory, device_id, token=None):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', device_id):
         raise ValueError('Device ID: 1–64 letters, numbers, underscores or hyphens.')
-    token = secrets.token_urlsafe(32)
+    token = token or secrets.token_urlsafe(32)
     with connect(Path(directory) / 'sentinel.db') as db:
-        db.execute('INSERT INTO devices VALUES (?,?,?)', (device_id, digest(token), time.time()))
+        db.execute('INSERT OR REPLACE INTO devices VALUES (?,?,?)', (device_id, digest(token), time.time()))
     return token
 
 
@@ -268,7 +268,7 @@ def main():
     parser.add_argument('--data-dir', type=Path, default=DATA)
     subs = parser.add_subparsers(dest='command', required=True)
     subs.add_parser('init')
-    reg = subs.add_parser('register'); reg.add_argument('device')
+    reg = subs.add_parser('register'); reg.add_argument('device'); reg.add_argument('--token', default=None)
     revoke = subs.add_parser('rotate'); revoke.add_argument('device')
     training = subs.add_parser('train'); training.add_argument('device'); training.add_argument('--limit', type=int, default=1000)
     subs.add_parser('demo')
@@ -278,7 +278,7 @@ def main():
         if args.command == 'init':
             print('ADMIN TOKEN (save privately; shown only once):\n'+initialize(args.data_dir))
         elif args.command == 'register':
-            print('DEVICE TOKEN (save privately; shown only once):\n'+register(args.data_dir, args.device))
+            print('DEVICE TOKEN (save privately; shown only once):\n'+register(args.data_dir, args.device, args.token))
         elif args.command == 'rotate':
             token = secrets.token_urlsafe(32)
             with connect(args.data_dir/'sentinel.db') as db:

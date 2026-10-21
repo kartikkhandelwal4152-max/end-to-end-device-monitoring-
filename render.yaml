@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sentinel-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: SENTINEL_DATA
+        value: /data
+      - key: SENTINEL_ADMIN_TOKEN
+        generateValue: true
+      - key: SENTINEL_DEFAULT_DEVICE
+        value: FRIEND-MAC
+      - key: SENTINEL_DEFAULT_TOKEN
+        generateValue: true
