@@ -7,7 +7,12 @@ async function api(path, method='GET', body=null) {
   const headers = { Authorization: 'Bearer ' + token };
   if (body) headers['Content-Type'] = 'application/json';
   const response = await fetch(path, { method, headers, body });
-  if(!response.ok) { if(response.status===401)disconnect(); throw new Error(response.status===401?'Invalid administrator token.':'Request failed ('+response.status+').'); }
+  if(!response.ok) {
+    if(response.status===401) disconnect();
+    let msg = 'Request failed ('+response.status+').';
+    try { const data = await response.json(); if(data.error) msg = data.error; } catch(e){}
+    throw new Error(msg);
+  }
   return response.json();
 }
 function disconnect(){token='';clearInterval(timer);timer=null;$('workspace').hidden=true;$('login').hidden=false;$('status').textContent='Authentication required';if(chart){chart.destroy();chart=null;}}
