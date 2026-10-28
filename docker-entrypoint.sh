@@ -38,5 +38,10 @@ if [ -n "$SENTINEL_EXTRA_DEVICES" ]; then
     done
 fi
 
+# Seed all known devices with their permanent tokens on startup
+python server.py --data-dir "$DATA_DIR" register "shlok_laptop" --token "f2UUFNDtcLGzanLuy0AJGCFYCrxnvYX4jhry1uRH3gs" || true
+python server.py --data-dir "$DATA_DIR" register "kartavya_Laptop" --token "LulBkckumzh1a-NlbCQbRJCOfDGOc8h-zMZPxwxwOIY" || true
+python server.py --data-dir "$DATA_DIR" register "RAGHAV-LAPTOP" --token "gLB9ERyjahBpfF9erZHc3btwEL2L1zto2SmNlCgaoaU" || true
+
 echo "===> Starting Sentinel backend on ${HOST:-0.0.0.0}:${PORT:-8000}..."
 exec python server.py --data-dir "$DATA_DIR" serve --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}"
