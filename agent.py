@@ -4,6 +4,7 @@ from collections import deque
 import getpass
 import os
 from pathlib import Path
+import platform
 import re
 import time
 from urllib.parse import urlparse
@@ -82,10 +83,33 @@ class Collector:
         failures, warning = self.auth.read()
         if warning:
             warnings.append(warning)
+        disk = None
+        try:
+            root = 'C:\\' if platform.system() == 'Windows' else '/'
+            disk = round(psutil.disk_usage(root).percent, 1)
+        except Exception:
+            pass
+        battery, is_plugged = None, None
+        try:
+            b = psutil.sensors_battery()
+            if b:
+                battery = round(b.percent, 1)
+                is_plugged = bool(b.power_plugged)
+        except Exception:
+            pass
+        uptime = None
+        try:
+            uptime = max(0, int(time.time() - psutil.boot_time()))
+        except Exception:
+            pass
+        os_info = f"{platform.system()} {platform.release()}"
+        hostname = (platform.node() or 'unknown')[:64]
         return {'sample_id': uuid.uuid4().hex, 'observed': time.time(), 'cpu': cpu,
                 'ram': psutil.virtual_memory().percent, 'process_count': len(psutil.pids()),
                 'connections': connections, 'bytes_per_second': rate,
-                'failed_logins': failures, 'processes': processes, 'warnings': warnings}
+                'failed_logins': failures, 'processes': processes, 'warnings': warnings,
+                'disk': disk, 'battery': battery, 'is_plugged': is_plugged,
+                'os_info': os_info, 'hostname': hostname, 'uptime': uptime}
 
 
 def validate_url(url, local_http):
@@ -144,8 +168,24 @@ def main():
                         print('Invalid sample rejected by server; dropped.')
                         continue
                     response.raise_for_status()
+                    data = response.json()
                     queue.popleft()
                     print('Telemetry delivered.')
+                    for cmd in data.get('commands', []):
+                        if cmd.get('action') == 'kill_process':
+                            target_pid = cmd.get('pid')
+                            p_name = cmd.get('name', 'process')
+                            try:
+                                proc = psutil.Process(target_pid)
+                                actual_name = proc.name()
+                                proc.terminate()
+                                print(f"[ACTIVE RESPONSE] Terminated process '{actual_name}' (PID {target_pid}) via remote command.")
+                            except psutil.NoSuchProcess:
+                                print(f"[ACTIVE RESPONSE] Process PID {target_pid} already stopped.")
+                            except psutil.AccessDenied:
+                                print(f"[ACTIVE RESPONSE] Access denied: cannot kill PID {target_pid} (insufficient privileges).")
+                            except Exception as exc:
+                                print(f"[ACTIVE RESPONSE] Failed to terminate PID {target_pid}: {exc}")
                 except requests.RequestException:
                     print('Server unavailable or TLS verification failed; preserving sample for retry.')
                     break

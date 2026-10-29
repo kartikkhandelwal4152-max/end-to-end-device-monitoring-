@@ -119,6 +119,24 @@ For your private CA, add `--ca path/to/ca-bundle.pem`. Certificate verification 
 | GET | `/api/overview` | Administrator Bearer token |
 | GET | `/api/devices/<id>/history` | Administrator Bearer token |
 | POST | `/api/alerts/<id>/ack` | Administrator Bearer token |
+| POST | `/api/devices/register` | Administrator Bearer token |
+| DELETE | `/api/devices/<id>` | Administrator Bearer token |
+| POST | `/api/devices/<id>/kill_process` | Administrator Bearer token (Active Response) |
+| GET/POST | `/api/settings/telegram` | Administrator Bearer token (Mobile Alerts) |
+| GET | `/reports/audit` | Administrator Bearer token / `?token=` (Audit PDF) |
+
+## Advanced Security & EDR Features
+
+1. **Active Response & Remote Process Kill Switch**:
+   Administrators can remotely terminate suspicious or rogue processes directly from the dashboard. The kill command is safely queued and dispatched to the agent on its next encrypted heartbeat, invoking local OS process termination.
+2. **Threat Blacklist & MITRE ATT&CK Mapping**:
+   Incoming process inventories are continuously scanned against common penetration testing, sniffing, and exploitation tools (`wireshark`, `nmap`, `mimikatz`, `xmrig`, `netcat`, `tor`, `hydra`, `john`, etc.). Matches instantly generate alerts annotated with MITRE ATT&CK Technique IDs (e.g. T1040, T1046, T1003, T1496).
+3. **Telegram Mobile Alerting**:
+   Real-time notifications sent directly to the security administrator's smartphone via Telegram Bot integration when high or critical security alerts trigger.
+4. **Rich Endpoint Telemetry**:
+   Detailed system metrics including Disk Usage (%), Battery Health & Charging State (%), System Uptime, Operating System details, and Hostnames.
+5. **Executive Security Audit Report**:
+   1-Click compliance and security posture report at `/reports/audit`, formatted with clean `@media print` styling for instant PDF generation or printing for faculty review.
 
 Telemetry requires `sample_id`, `observed` (Unix seconds), `cpu`, `ram`, `process_count`, `connections`, `bytes_per_second`, and `failed_logins`. Optional `processes` has up to 100 `{pid, name}` entries; optional `warnings` has up to 10 strings. `connections` and `failed_logins` may be null when unavailable. CPU/RAM are percentages; bytes/second is combined send+receive across interfaces. Payloads are capped at 64 KiB; timestamps must be within ten minutes of server time. Device/sample ID uniqueness makes retries idempotent within the accepted timestamp window. Older submissions are rejected. Server receipt order is used for ML deltas; clock accuracy still matters.
 
@@ -133,7 +151,7 @@ Telemetry requires `sample_id`, `observed` (Unix seconds), `cpu`, `ram`, `proces
 - CPU, RAM and process collection uses cross-platform psutil, but this package was tested on Linux only. Per-platform validation remains necessary.
 - Chart.js and Bootstrap are loaded from pinned CDN URLs and require internet. If the chart library cannot load, current values, alerts and custom layout still work; the dashboard shows a chart warning. Self-host these assets for offline deployment.
 - Device tokens can be rotated with `python server.py rotate LAPTOP-01`. Rotation invalidates the old token. There is no administrator token recovery command or multi-user login system yet; preserve the initial admin token securely.
-- No automated blocking, malware removal, process termination, incident notification integration, account-based login correlation, rate limiting, or tamper-resistant agent is included.
+- Process termination (Active Response) is operator-directed via administrator authentication from the dashboard. Background tamper resistance and kernel-level rootkit detection remain beyond the educational scope of this prototype.
 - The model has not been evaluated on a labelled attack dataset. Demonstration anomaly detection is not evidence of real-world detection accuracy.
 
 ## Tests
@@ -149,5 +167,5 @@ python -m pytest -q
 
 ## How to explain this project to faculty
 
-“Humne ek endpoint agent banaya hai jo CPU, RAM, process aur available security signals collect karta hai. Har registered device ka alag authentication token hai. Backend verified data SQLite mein save karta hai. Rules known conditions detect karte hain aur Isolation Forest normal baseline se unusual metric combinations identify karta hai. Dashboard admin ko device status aur alerts dikhata hai. Abhi ye monitoring aur detection prototype hai; automatic attack blocking is version mein implement nahi hai.”
+“Humne ek full-stack Endpoint Detection and Response (EDR) system design kiya hai jisme lightweight Python agent endpoints par run hota hai aur hardware telemetry (CPU, RAM, Disk, Battery, Uptime), active processes aur security signals collect karta hai. Server par real-time behavioural anomaly detection ke liye Unsupervised Machine Learning (Isolation Forest) aur rule-based threat engine integrated hai jo MITRE ATT&CK techniques (jaise sniffing, port scans, credential dumping) ko automatically detect karta hai. Agar koi high severity alert aata hai to administrator ko instant Telegram mobile notification dispatch hota hai. Administrator dashboard se directly remote process termination (Active Response) execute kar sakta hai aur 1-click Executive Security Audit Report PDF generate kar sakta hai compliance verification ke liye.”
 # icmp pings do -> for host ,zabbix

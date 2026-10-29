@@ -36,7 +36,75 @@ CREATE INDEX IF NOT EXISTS alerts_device_kind ON alerts(device_id, kind, created
 CREATE TABLE IF NOT EXISTS models (
  device_id TEXT PRIMARY KEY REFERENCES devices(id), trained REAL NOT NULL,
  baseline TEXT NOT NULL, sample_count INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS commands (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL REFERENCES devices(id),
+ action TEXT NOT NULL, payload TEXT NOT NULL, created REAL NOT NULL,
+ executed INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS commands_device_exec ON commands(device_id, executed);
+CREATE TABLE IF NOT EXISTS settings (
+ key TEXT PRIMARY KEY, value TEXT NOT NULL);
 '''
+
+
+THREAT_SIGNATURES = {
+    'wireshark': ('T1040', 'Network Sniffing', 'high', 'Packet sniffing tool detected. Unauthorized traffic inspection risk.'),
+    'tshark': ('T1040', 'Network Sniffing', 'high', 'Command-line packet capture tool detected.'),
+    'tcpdump': ('T1040', 'Network Sniffing', 'high', 'Packet analysis utility detected.'),
+    'nmap': ('T1046', 'Network Service Discovery', 'high', 'Port scanner detected. Reconnaissance activity suspected.'),
+    'zenmap': ('T1046', 'Network Service Discovery', 'high', 'Port scanner GUI detected.'),
+    'mimikatz': ('T1003', 'OS Credential Dumping', 'critical', 'Credential dumper detected. High severity credential theft risk.'),
+    'xmrig': ('T1496', 'Resource Hijacking', 'critical', 'Cryptominer process detected. System computing resources hijacked.'),
+    'minerd': ('T1496', 'Resource Hijacking', 'critical', 'Cryptominer process detected.'),
+    'netcat': ('T1059', 'Command & Scripting Interpreter', 'high', 'Netcat utility detected. Potential reverse shell listener.'),
+    'nc': ('T1059', 'Command & Scripting Interpreter', 'medium', 'Netcat utility active.'),
+    'ncat': ('T1059', 'Command & Scripting Interpreter', 'high', 'Ncat network utility detected.'),
+    'tor': ('T1090.003', 'Multi-hop Proxy (Tor)', 'high', 'Tor anonymity network client detected. Obfuscated traffic risk.'),
+    'hydra': ('T1110', 'Brute Force', 'high', 'Network login brute-forcing tool detected (THC Hydra).'),
+    'john': ('T1110.002', 'Password Cracking', 'high', 'Password cracker detected (John the Ripper).'),
+    'hashcat': ('T1110.002', 'Password Cracking', 'high', 'GPU password cracker detected (hashcat).'),
+    'powersploit': ('T1059.001', 'PowerShell Execution', 'critical', 'PowerSploit post-exploitation framework detected.')
+}
+
+
+def check_process_threat(name):
+    if not isinstance(name, str):
+        return None
+    base = os.path.basename(name).lower()
+    if base.endswith('.exe'):
+        base = base[:-4]
+    return THREAT_SIGNATURES.get(base)
+
+
+def send_telegram(db_path, device, severity, kind, message):
+    def _worker():
+        try:
+            with connect(db_path) as db:
+                token_row = db.execute("SELECT value FROM settings WHERE key='telegram_bot_token'").fetchone()
+                chat_row = db.execute("SELECT value FROM settings WHERE key='telegram_chat_id'").fetchone()
+                if not token_row or not chat_row:
+                    return
+                bot_token = token_row['value'].strip()
+                chat_id = chat_row['value'].strip()
+                if not bot_token or not chat_id:
+                    return
+            text = (
+                f"🚨 *SENTINEL SECURITY ALERT*\n\n"
+                f"🖥️ *Endpoint:* `{device}`\n"
+                f"⚠️ *Severity:* *{severity.upper()}*\n"
+                f"📌 *Category:* `{kind}`\n"
+                f"📝 *Details:* {message}\n"
+                f"⏱️ *Time:* {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
+            )
+            import urllib.request
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            payload = json.dumps({'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}).encode('utf-8')
+            req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+        except Exception as exc:
+            print(f"[TELEGRAM ALERT ERROR] {exc}", flush=True)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def digest(token):
@@ -109,6 +177,35 @@ def validate(payload):
     if not isinstance(warnings, list) or len(warnings) > 10 or any(not isinstance(w, str) or len(w) > 250 for w in warnings):
         abort(400, 'Invalid warnings.')
     clean['warnings'] = warnings
+
+    # Extended telemetry fields (Disk, Battery, Uptime, Hostname, OS)
+    for num_key in ('disk', 'battery'):
+        v = payload.get(num_key)
+        if v is not None:
+            if isinstance(v, bool) or not isinstance(v, (float, int)) or not math.isfinite(v) or not 0 <= v <= 100:
+                abort(400, f'Invalid {num_key}.')
+            clean[num_key] = round(float(v), 1)
+        else:
+            clean[num_key] = None
+
+    is_plugged = payload.get('is_plugged')
+    clean['is_plugged'] = bool(is_plugged) if isinstance(is_plugged, bool) else None
+
+    uptime = payload.get('uptime')
+    if uptime is not None:
+        if isinstance(uptime, bool) or not isinstance(uptime, (int, float)) or uptime < 0:
+            abort(400, 'Invalid uptime.')
+        clean['uptime'] = int(uptime)
+    else:
+        clean['uptime'] = None
+
+    for str_key in ('os_info', 'hostname'):
+        val = payload.get(str_key)
+        if val is not None and isinstance(val, str) and len(val) <= 128:
+            clean[str_key] = val
+        else:
+            clean[str_key] = None
+
     return clean
 
 
@@ -116,13 +213,17 @@ def create_app(directory=DATA):
     directory = Path(directory)
     config = json.loads((directory / 'config.json').read_text())
     path = directory / 'sentinel.db'
+    with connect(path) as db:
+        db.executescript(SCHEMA)
     app = Flask(__name__)
     app.config['MAX_CONTENT_LENGTH'] = 65536
     cache, lock = {}, threading.RLock()
 
     def bearer():
         header = request.headers.get('Authorization', '')
-        return header[7:] if header.startswith('Bearer ') else ''
+        if header.startswith('Bearer '):
+            return header[7:]
+        return request.args.get('token', '')
 
     def admin(fn):
         @wraps(fn)
@@ -137,7 +238,7 @@ def create_app(directory=DATA):
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
         return response
 
     @app.errorhandler(HTTPException)
@@ -158,6 +259,7 @@ def create_app(directory=DATA):
         if not recent:
             db.execute('INSERT INTO alerts(device_id,created,kind,severity,message) VALUES (?,?,?,?,?)',
                        (device, now, kind, severity, message))
+            send_telegram(path, device, severity, kind, message)
 
     @app.post('/api/telemetry')
     def ingest():
@@ -193,7 +295,33 @@ def create_app(directory=DATA):
                 alert(db, device, now, 'high_cpu', 'medium', 'CPU utilization reached at least 95%; investigate workload.')
             if anomalous:
                 alert(db, device, now, 'ml_anomaly', 'medium', 'Isolation Forest flagged an unusual metric combination; investigation required.')
-            return jsonify(status='accepted', id=cursor.lastrowid, anomaly=anomalous, score=score), 201
+
+            for proc in payload.get('processes', []):
+                threat = check_process_threat(proc['name'])
+                if threat:
+                    tid, tech, severity, desc = threat
+                    base_proc = os.path.basename(proc['name']).lower()
+                    if base_proc.endswith('.exe'):
+                        base_proc = base_proc[:-4]
+                    alert(db, device, now, f'threat_{base_proc}', severity,
+                          f"[MITRE ATT&CK {tid}: {tech}] {desc} (PID: {proc['pid']}, Process: {proc['name']})")
+
+            cmd_rows = db.execute('SELECT id, action, payload FROM commands WHERE device_id=? AND executed=0 ORDER BY id ASC', (device,)).fetchall()
+            commands_to_send = []
+            if cmd_rows:
+                cmd_ids = []
+                for cr in cmd_rows:
+                    cmd_ids.append(cr['id'])
+                    item = {'id': cr['id'], 'action': cr['action']}
+                    try:
+                        item.update(json.loads(cr['payload']))
+                    except Exception:
+                        pass
+                    commands_to_send.append(item)
+                placeholders = ','.join('?' for _ in cmd_ids)
+                db.execute(f'UPDATE commands SET executed=1 WHERE id IN ({placeholders})', cmd_ids)
+
+            return jsonify(status='accepted', id=cursor.lastrowid, anomaly=anomalous, score=score, commands=commands_to_send), 201
 
     @app.get('/api/overview')
     @admin
@@ -251,9 +379,93 @@ def create_app(directory=DATA):
             db.execute('DELETE FROM telemetry WHERE device_id=?', (device_id,))
             db.execute('DELETE FROM alerts WHERE device_id=?', (device_id,))
             db.execute('DELETE FROM models WHERE device_id=?', (device_id,))
+            db.execute('DELETE FROM commands WHERE device_id=?', (device_id,))
             db.execute('DELETE FROM devices WHERE id=?', (device_id,))
             cache.pop(device_id, None)
         return jsonify(status='deleted', device_id=device_id)
+
+    @app.post('/api/devices/<device>/kill_process')
+    @admin
+    def kill_process(device):
+        data = request.get_json(silent=True) or {}
+        pid = data.get('pid')
+        name = str(data.get('name') or 'unknown')[:200]
+        if not isinstance(pid, int) or pid <= 0:
+            abort(400, 'Valid positive PID required.')
+        with connect(path) as db:
+            known = db.execute('SELECT id FROM devices WHERE id=?', (device,)).fetchone()
+            if not known:
+                abort(404, 'Device not found.')
+            cmd_payload = json.dumps({'pid': pid, 'name': name})
+            db.execute('INSERT INTO commands(device_id, action, payload, created, executed) VALUES (?,?,?,?,0)',
+                       (device, 'kill_process', cmd_payload, time.time()))
+        return jsonify(status='queued', device=device, pid=pid, name=name)
+
+    @app.get('/api/settings/telegram')
+    @admin
+    def get_telegram_settings():
+        with connect(path) as db:
+            t_row = db.execute("SELECT value FROM settings WHERE key='telegram_bot_token'").fetchone()
+            c_row = db.execute("SELECT value FROM settings WHERE key='telegram_chat_id'").fetchone()
+            has_token = bool(t_row and t_row['value'].strip())
+            masked_token = (t_row['value'][:6] + '...' + t_row['value'][-4:]) if has_token else ''
+            chat_id = c_row['value'] if c_row else ''
+        return jsonify(configured=has_token, masked_token=masked_token, chat_id=chat_id)
+
+    @app.post('/api/settings/telegram')
+    @admin
+    def set_telegram_settings():
+        data = request.get_json(silent=True) or {}
+        bot_token = str(data.get('bot_token', '')).strip()
+        chat_id = str(data.get('chat_id', '')).strip()
+        test = bool(data.get('test'))
+        with connect(path) as db:
+            if bot_token:
+                db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_bot_token', ?)", (bot_token,))
+            if chat_id:
+                db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_chat_id', ?)", (chat_id,))
+        if test:
+            send_telegram(path, 'SYSTEM', 'info', 'test_notification', '✅ Sentinel: Telegram alert integration active and verified!')
+        return jsonify(status='saved')
+
+    @app.get('/reports/audit')
+    @admin
+    def audit_report():
+        with connect(path) as db:
+            devices = []
+            for d in db.execute('SELECT id, created FROM devices ORDER BY id'):
+                row = db.execute('SELECT * FROM telemetry WHERE device_id=? ORDER BY id DESC LIMIT 1', (d['id'],)).fetchone()
+                model = db.execute('SELECT trained, sample_count FROM models WHERE device_id=?', (d['id'],)).fetchone()
+                payload = json.loads(row['payload']) if row else {}
+                online = bool(row and time.time() - row['received'] < 60)
+                devices.append({
+                    'id': d['id'],
+                    'created': d['created'],
+                    'online': online,
+                    'last_seen': row['received'] if row else None,
+                    'telemetry': payload,
+                    'model': dict(model) if model else None
+                })
+            alerts = [dict(r) for r in db.execute('SELECT * FROM alerts ORDER BY id DESC LIMIT 200')]
+            open_alerts_count = db.execute('SELECT COUNT(*) FROM alerts WHERE acknowledged=0').fetchone()[0]
+            commands = [dict(r) for r in db.execute('SELECT * FROM commands ORDER BY id DESC LIMIT 50')]
+
+            critical_alerts = sum(1 for a in alerts if a['severity'] == 'critical')
+            high_alerts = sum(1 for a in alerts if a['severity'] == 'high')
+            score = max(0, 100 - (critical_alerts * 15 + high_alerts * 8 + open_alerts_count * 3))
+
+            summary = {
+                'total_devices': len(devices),
+                'online_devices': sum(1 for d in devices if d['online']),
+                'total_alerts': len(alerts),
+                'open_alerts': open_alerts_count,
+                'critical_alerts': critical_alerts,
+                'high_alerts': high_alerts,
+                'compliance_score': score,
+                'generated_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
+                'threat_processes': sum(1 for a in alerts if a['kind'].startswith('threat_'))
+            }
+        return render_template('report.html', summary=summary, devices=devices, alerts=alerts, commands=commands)
 
     return app
 
@@ -319,6 +531,7 @@ def main():
                 db.execute('DELETE FROM telemetry WHERE device_id=?', (args.device,))
                 db.execute('DELETE FROM alerts WHERE device_id=?', (args.device,))
                 db.execute('DELETE FROM models WHERE device_id=?', (args.device,))
+                db.execute('DELETE FROM commands WHERE device_id=?', (args.device,))
                 cur = db.execute('DELETE FROM devices WHERE id=?', (args.device,))
                 if not cur.rowcount: raise ValueError('Unknown device')
             print('Deleted device: '+args.device)

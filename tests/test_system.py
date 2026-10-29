@@ -113,3 +113,70 @@ def test_delete_device(setup):
     overview = c.get('/api/overview', headers=a).get_json()
     assert not any(dev['id'] == 'LAPTOP-01' for dev in overview['devices'])
 
+def test_extended_telemetry_and_threat_detection(setup):
+    _, c, a, d = setup
+    p = sample(
+        disk=52.5, battery=91.0, is_plugged=True, uptime=86400,
+        os_info="Linux 6.8", hostname="test-node-01",
+        processes=[{'pid': 9999, 'name': 'wireshark.exe'}]
+    )
+    res = c.post('/api/telemetry', headers=d, json=p)
+    assert res.status_code == 201
+
+    overview = c.get('/api/overview', headers=a).get_json()
+    dev = next(d for d in overview['devices'] if d['id'] == 'LAPTOP-01')
+    assert dev['latest']['disk'] == 52.5
+    assert dev['latest']['battery'] == 91.0
+    assert dev['latest']['is_plugged'] is True
+    assert dev['latest']['os_info'] == "Linux 6.8"
+
+    threat_alerts = [alert for alert in overview['alerts'] if alert['kind'] == 'threat_wireshark']
+    assert len(threat_alerts) == 1
+    assert "MITRE ATT&CK T1040" in threat_alerts[0]['message']
+
+def test_remote_kill_process_command_delivery(setup):
+    _, c, a, d = setup
+    # Admin queues a kill process command
+    kill_res = c.post('/api/devices/LAPTOP-01/kill_process', headers=a, json={'pid': 4040, 'name': 'xmrig'})
+    assert kill_res.status_code == 200
+    assert kill_res.get_json()['status'] == 'queued'
+
+    # Endpoint sends telemetry heartbeat
+    hb_res = c.post('/api/telemetry', headers=d, json=sample())
+    assert hb_res.status_code == 201
+    cmds = hb_res.get_json().get('commands', [])
+    assert len(cmds) == 1
+    assert cmds[0]['action'] == 'kill_process'
+    assert cmds[0]['pid'] == 4040
+
+    # Next heartbeat should have no pending commands
+    hb_res2 = c.post('/api/telemetry', headers=d, json=sample())
+    assert hb_res2.status_code == 201
+    assert hb_res2.get_json().get('commands', []) == []
+
+def test_telegram_and_audit_report(setup):
+    _, c, a, _ = setup
+    admin_token = a['Authorization'].replace('Bearer ', '')
+    # Check settings endpoint
+    tg_get = c.get('/api/settings/telegram', headers=a)
+    assert tg_get.status_code == 200
+    assert tg_get.get_json()['configured'] is False
+
+    tg_set = c.post('/api/settings/telegram', headers=a, json={'bot_token': '123456:FAKE_TOKEN', 'chat_id': '987654321'})
+    assert tg_set.status_code == 200
+    assert tg_set.get_json()['status'] == 'saved'
+
+    tg_get2 = c.get('/api/settings/telegram', headers=a)
+    assert tg_get2.get_json()['configured'] is True
+
+    # Audit report with Bearer auth
+    report_res = c.get('/reports/audit', headers=a)
+    assert report_res.status_code == 200
+    assert b'EXECUTIVE SECURITY AUDIT' in report_res.data
+
+    # Audit report with token query parameter
+    report_param_res = c.get(f'/reports/audit?token={admin_token}')
+    assert report_param_res.status_code == 200
+    assert b'EXECUTIVE SECURITY AUDIT' in report_param_res.data
+
+
