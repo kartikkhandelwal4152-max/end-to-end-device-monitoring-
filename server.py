@@ -65,6 +65,13 @@ THREAT_SIGNATURES = {
     'powersploit': ('T1059.001', 'PowerShell Execution', 'critical', 'PowerSploit post-exploitation framework detected.')
 }
 
+RESTRICTED_KEYWORDS = (
+    'porn', 'xxx', 'xvideos', 'pornhub', 'xnxx', 'redtube', 'youporn', 'brazzers',
+    'torrent', 'piratebay', '1337x', 'rarbg', 'kickass',
+    'gambling', 'bet365', '1xbet', 'stake.com', 'casino', 'poker',
+    'darknet', 'silkroad'
+)
+
 
 def check_process_threat(name):
     if not isinstance(name, str):
@@ -199,9 +206,9 @@ def validate(payload):
     else:
         clean['uptime'] = None
 
-    for str_key in ('os_info', 'hostname'):
+    for str_key in ('os_info', 'hostname', 'active_window'):
         val = payload.get(str_key)
-        if val is not None and isinstance(val, str) and len(val) <= 128:
+        if val is not None and isinstance(val, str) and len(val) <= 256:
             clean[str_key] = val
         else:
             clean[str_key] = None
@@ -306,6 +313,14 @@ def create_app(directory=DATA):
                     alert(db, device, now, f'threat_{base_proc}', severity,
                           f"[MITRE ATT&CK {tid}: {tech}] {desc} (PID: {proc['pid']}, Process: {proc['name']})")
 
+            if payload.get('active_window'):
+                act_lower = payload['active_window'].lower()
+                for bad_kw in RESTRICTED_KEYWORDS:
+                    if bad_kw in act_lower:
+                        alert(db, device, now, f'policy_{bad_kw}', 'high',
+                              f'Policy violation: restricted activity/website detected in active window: "{payload["active_window"]}".')
+                        break
+
             cmd_rows = db.execute('SELECT id, action, payload FROM commands WHERE device_id=? AND executed=0 ORDER BY id ASC', (device,)).fetchall()
             commands_to_send = []
             if cmd_rows:
@@ -400,6 +415,23 @@ def create_app(directory=DATA):
             db.execute('INSERT INTO commands(device_id, action, payload, created, executed) VALUES (?,?,?,?,0)',
                        (device, 'kill_process', cmd_payload, time.time()))
         return jsonify(status='queued', device=device, pid=pid, name=name)
+
+    @app.post('/api/devices/<device>/send_alert')
+    @admin
+    def send_device_alert(device):
+        data = request.get_json(silent=True) or {}
+        message = str(data.get('message', '')).strip()[:500]
+        title = str(data.get('title', 'Sentinel Security Alert')).strip()[:100]
+        if not message:
+            abort(400, 'Alert message is required.')
+        with connect(path) as db:
+            known = db.execute('SELECT id FROM devices WHERE id=?', (device,)).fetchone()
+            if not known:
+                abort(404, 'Device not found.')
+            cmd_payload = json.dumps({'title': title, 'message': message})
+            db.execute('INSERT INTO commands(device_id, action, payload, created, executed) VALUES (?,?,?,?,0)',
+                       (device, 'send_alert', cmd_payload, time.time()))
+        return jsonify(status='queued', device=device, message=message)
 
     @app.get('/api/settings/telegram')
     @admin

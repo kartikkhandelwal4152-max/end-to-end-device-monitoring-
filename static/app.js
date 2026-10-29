@@ -195,6 +195,31 @@ async function refresh(){
       );
 
       const actionTd = text('td', '');
+      const warnBtn = text('button', '📢 Warn', 'secondary');
+      warnBtn.style.padding = '4px 8px';
+      warnBtn.style.fontSize = '11px';
+      warnBtn.style.marginRight = '6px';
+      warnBtn.style.color = '#ffc085';
+      warnBtn.style.borderColor = '#ffc08555';
+      warnBtn.title = 'Send real-time popup security warning to ' + d.id;
+      warnBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const defaultMsg = 'SECURITY WARNING: Restricted web browsing / policy violation detected. Activity is logged by Security Operations.';
+        const msg = prompt('Enter security warning to display on ' + d.id + ':', defaultMsg);
+        if (msg && msg.trim()) {
+          warnBtn.disabled = true;
+          try {
+            await api('/api/devices/' + encodeURIComponent(d.id) + '/send_alert', 'POST', JSON.stringify({ message: msg.trim() }));
+            alert('Security warning dispatched to ' + d.id + '! It will pop up on their screen on the next heartbeat.');
+          } catch(err) {
+            alert('Failed: ' + err.message);
+          } finally {
+            warnBtn.disabled = false;
+          }
+        }
+      });
+      actionTd.append(warnBtn);
+
       const delBtn = text('button', 'Delete', 'secondary');
       delBtn.style.padding = '4px 8px';
       delBtn.style.fontSize = '11px';
@@ -270,6 +295,20 @@ async function history(){
 
   $('chart-message').textContent = samples.length ? 'Last ' + samples.length + ' samples · CPU / RAM (%)' : 'Waiting for this endpoint’s first sample.';
   const latest = samples.at(-1);
+
+  const actElem = $('active-window-title');
+  if (actElem) {
+    const actVal = latest?.active_window || 'Desktop / Inactive';
+    actElem.textContent = actVal;
+    const actLower = actVal.toLowerCase();
+    const badKws = ['porn', 'xxx', 'torrent', 'gambling', 'casino', 'bet365'];
+    if (badKws.some(kw => actLower.includes(kw))) {
+      actElem.style.color = '#ff7b72';
+      actElem.textContent += ' ⚠️ [RESTRICTED CONTENT]';
+    } else {
+      actElem.style.color = '#86e1b3';
+    }
+  }
 
   $('coverage').replaceChildren();
   for(const warning of latest?.warnings ?? []) {

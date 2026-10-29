@@ -179,4 +179,34 @@ def test_telegram_and_audit_report(setup):
     assert report_param_res.status_code == 200
     assert b'EXECUTIVE SECURITY AUDIT' in report_param_res.data
 
+def test_active_window_policy_and_remote_message(setup):
+    _, c, a, d = setup
+    # Send telemetry with a restricted site in active window
+    p = sample(active_window="Watch Hot XXX Videos - Google Chrome")
+    res = c.post('/api/telemetry', headers=d, json=p)
+    assert res.status_code == 201
+
+    overview = c.get('/api/overview', headers=a).get_json()
+    dev = next(d for d in overview['devices'] if d['id'] == 'LAPTOP-01')
+    assert dev['latest']['active_window'] == "Watch Hot XXX Videos - Google Chrome"
+
+    # Verify policy violation alert was generated
+    policy_alerts = [alert for alert in overview['alerts'] if alert['kind'].startswith('policy_')]
+    assert len(policy_alerts) == 1
+    assert "Policy violation" in policy_alerts[0]['message']
+
+    # Admin sends warning alert message to device
+    send_res = c.post('/api/devices/LAPTOP-01/send_alert', headers=a, json={'message': 'Close unauthorized sites now!'})
+    assert send_res.status_code == 200
+    assert send_res.get_json()['status'] == 'queued'
+
+    # Endpoint receives the warning message in heartbeat
+    hb = c.post('/api/telemetry', headers=d, json=sample())
+    assert hb.status_code == 201
+    cmds = hb.get_json().get('commands', [])
+    assert len(cmds) == 1
+    assert cmds[0]['action'] == 'send_alert'
+    assert cmds[0]['message'] == 'Close unauthorized sites now!'
+
+
 

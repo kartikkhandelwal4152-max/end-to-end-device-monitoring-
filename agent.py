@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import threading
 import time
 from urllib.parse import urlparse
 import uuid
@@ -104,12 +105,54 @@ class Collector:
             pass
         os_info = f"{platform.system()} {platform.release()}"
         hostname = (platform.node() or 'unknown')[:64]
+        active_window = get_active_window()
         return {'sample_id': uuid.uuid4().hex, 'observed': time.time(), 'cpu': cpu,
                 'ram': psutil.virtual_memory().percent, 'process_count': len(psutil.pids()),
                 'connections': connections, 'bytes_per_second': rate,
                 'failed_logins': failures, 'processes': processes, 'warnings': warnings,
                 'disk': disk, 'battery': battery, 'is_plugged': is_plugged,
-                'os_info': os_info, 'hostname': hostname, 'uptime': uptime}
+                'os_info': os_info, 'hostname': hostname, 'uptime': uptime,
+                'active_window': active_window}
+
+
+def get_active_window():
+    try:
+        if platform.system() == 'Windows':
+            import ctypes
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if not hwnd:
+                return None
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return None
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+            val = buff.value.strip()
+            return val[:200] if val else None
+        elif platform.system() == 'Darwin':
+            import subprocess
+            script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+            out = subprocess.check_output(['osascript', '-e', script], timeout=2, text=True, stderr=subprocess.DEVNULL).strip()
+            return out[:200] if out else None
+    except Exception:
+        pass
+    return None
+
+
+def trigger_popup(title, message):
+    try:
+        if platform.system() == 'Windows':
+            import ctypes
+            # MB_ICONWARNING (0x30) | MB_SETFOREGROUND (0x10000) | MB_SYSTEMMODAL (0x1000)
+            ctypes.windll.user32.MessageBoxW(0, str(message), str(title), 0x30 | 0x10000 | 0x1000)
+        elif platform.system() == 'Darwin':
+            import subprocess
+            subprocess.run(['osascript', '-e', f'display alert "{title}" message "{message}"'], timeout=20, stderr=subprocess.DEVNULL)
+        else:
+            import subprocess
+            subprocess.run(['notify-send', str(title), str(message)], timeout=10, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"[ACTIVE RESPONSE] Popup error: {e}")
 
 
 def validate_url(url, local_http):
@@ -172,7 +215,8 @@ def main():
                     queue.popleft()
                     print('Telemetry delivered.')
                     for cmd in data.get('commands', []):
-                        if cmd.get('action') == 'kill_process':
+                        action = cmd.get('action')
+                        if action == 'kill_process':
                             target_pid = cmd.get('pid')
                             p_name = cmd.get('name', 'process')
                             try:
@@ -186,6 +230,11 @@ def main():
                                 print(f"[ACTIVE RESPONSE] Access denied: cannot kill PID {target_pid} (insufficient privileges).")
                             except Exception as exc:
                                 print(f"[ACTIVE RESPONSE] Failed to terminate PID {target_pid}: {exc}")
+                        elif action in ('send_alert', 'show_alert'):
+                            t = cmd.get('title', 'Sentinel Security Alert')
+                            m = cmd.get('message', 'Security alert from administrator.')
+                            print(f"[ACTIVE RESPONSE] Security alert received from admin: '{m}'")
+                            threading.Thread(target=trigger_popup, args=(t, m), daemon=True).start()
                 except requests.RequestException:
                     print('Server unavailable or TLS verification failed; preserving sample for retry.')
                     break
