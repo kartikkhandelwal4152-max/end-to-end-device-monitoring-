@@ -116,26 +116,73 @@ class Collector:
 
 
 def get_active_window():
-    try:
-        if platform.system() == 'Windows':
+    if platform.system() == 'Windows':
+        try:
             import ctypes
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            if not hwnd:
-                return None
-            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-            if length <= 0:
-                return None
-            buff = ctypes.create_unicode_buffer(length + 1)
-            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
-            val = buff.value.strip()
-            return val[:200] if val else None
-        elif platform.system() == 'Darwin':
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            user32.GetForegroundWindow.restype = wintypes.HWND
+            user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+            user32.GetWindowTextLengthW.restype = ctypes.c_int
+            user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
+            user32.IsWindowVisible.restype = wintypes.BOOL
+
+            # 1. Check foreground window
+            fg_hwnd = user32.GetForegroundWindow()
+            fg_title = None
+            if fg_hwnd:
+                length = user32.GetWindowTextLengthW(fg_hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(fg_hwnd, buff, length + 1)
+                    fg_title = buff.value.strip()
+
+            browser_names = ('Chrome', 'Edge', 'Brave', 'Firefox', 'Opera')
+            # If foreground is a browser, return immediately
+            if fg_title and any(b in fg_title for b in browser_names):
+                return fg_title[:200]
+
+            # 2. If foreground is not a browser (e.g. PowerShell or Desktop), check open browser windows
+            browser_windows = []
+            WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+            def enum_cb(hwnd, lparam):
+                if user32.IsWindowVisible(hwnd):
+                    l = user32.GetWindowTextLengthW(hwnd)
+                    if l > 0:
+                        buf = ctypes.create_unicode_buffer(l + 1)
+                        user32.GetWindowTextW(hwnd, buf, l + 1)
+                        t = buf.value.strip()
+                        if t and any(b in t for b in browser_names):
+                            browser_windows.append(t)
+                return True
+
+            user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+
+            # Pick browser window that has tab title (contains separator or web domain)
+            for bw in browser_windows:
+                if any(delim in bw for delim in (' - ', ' — ', ' | ', 'http', '.com', '.org', '.net', '.in', 'www.')):
+                    return bw[:200]
+
+            if browser_windows:
+                return browser_windows[0][:200]
+
+            if fg_title:
+                return fg_title[:200]
+
+        except Exception:
+            pass
+        return None
+
+    elif platform.system() == 'Darwin':
+        try:
             import subprocess
             script = 'tell application "System Events" to get name of first application process whose frontmost is true'
             out = subprocess.check_output(['osascript', '-e', script], timeout=2, text=True, stderr=subprocess.DEVNULL).strip()
             return out[:200] if out else None
-    except Exception:
-        pass
+        except Exception:
+            return None
     return None
 
 

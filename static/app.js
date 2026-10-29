@@ -178,8 +178,22 @@ async function refresh(){
       row.append(text('td', d.id));
 
       const osHost = d.latest ? ((d.latest.os_info || 'Unknown OS') + (d.latest.hostname ? ' (' + d.latest.hostname + ')' : '')) : '—';
-      const osTd = text('td', osHost);
+      const osTd = text('td', '');
       osTd.style.fontSize = '12px';
+      osTd.append(text('div', osHost));
+      if (d.latest && d.latest.active_window) {
+        const isBad = ['porn', 'xxx', 'torrent', 'gambling', 'casino', 'bet365'].some(kw => d.latest.active_window.toLowerCase().includes(kw));
+        const winDiv = text('div', '🌐 ' + d.latest.active_window);
+        winDiv.style.fontSize = '11px';
+        winDiv.style.color = isBad ? '#ff7b72' : '#86e1b3';
+        winDiv.style.marginTop = '4px';
+        winDiv.style.maxWidth = '260px';
+        winDiv.style.overflow = 'hidden';
+        winDiv.style.textOverflow = 'ellipsis';
+        winDiv.style.whiteSpace = 'nowrap';
+        winDiv.title = 'Active window: ' + d.latest.active_window;
+        osTd.append(winDiv);
+      }
       row.append(osTd);
 
       const state = text('td', '');
