@@ -118,6 +118,7 @@ def test_extended_telemetry_and_threat_detection(setup):
     p = sample(
         disk=52.5, battery=91.0, is_plugged=True, uptime=86400,
         os_info="Linux 6.8", hostname="test-node-01",
+        ip_address="192.168.1.55",
         processes=[{'pid': 9999, 'name': 'wireshark.exe'}]
     )
     res = c.post('/api/telemetry', headers=d, json=p)
@@ -129,6 +130,8 @@ def test_extended_telemetry_and_threat_detection(setup):
     assert dev['latest']['battery'] == 91.0
     assert dev['latest']['is_plugged'] is True
     assert dev['latest']['os_info'] == "Linux 6.8"
+    assert dev['latest']['ip_address'] == "192.168.1.55"
+    assert dev['latest']['public_ip'] is not None
 
     threat_alerts = [alert for alert in overview['alerts'] if alert['kind'] == 'threat_wireshark']
     assert len(threat_alerts) == 1

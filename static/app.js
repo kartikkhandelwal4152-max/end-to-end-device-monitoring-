@@ -181,6 +181,18 @@ async function refresh(){
       const osTd = text('td', '');
       osTd.style.fontSize = '12px';
       osTd.append(text('div', osHost));
+
+      if (d.latest && (d.latest.ip_address || d.latest.public_ip)) {
+        const ipParts = [];
+        if (d.latest.ip_address) ipParts.push('Local: ' + d.latest.ip_address);
+        if (d.latest.public_ip) ipParts.push('Pub: ' + d.latest.public_ip);
+        const ipDiv = text('div', '📍 ' + ipParts.join(' · '));
+        ipDiv.style.fontSize = '11px';
+        ipDiv.style.color = 'var(--muted)';
+        ipDiv.style.marginTop = '2px';
+        osTd.append(ipDiv);
+      }
+
       if (d.latest && d.latest.active_window) {
         const isBad = ['porn', 'xxx', 'torrent', 'gambling', 'casino', 'bet365'].some(kw => d.latest.active_window.toLowerCase().includes(kw));
         const winDiv = text('div', '🌐 ' + d.latest.active_window);

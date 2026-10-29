@@ -106,13 +106,30 @@ class Collector:
         os_info = f"{platform.system()} {platform.release()}"
         hostname = (platform.node() or 'unknown')[:64]
         active_window = get_active_window()
+        ip_address = get_local_ip()
         return {'sample_id': uuid.uuid4().hex, 'observed': time.time(), 'cpu': cpu,
                 'ram': psutil.virtual_memory().percent, 'process_count': len(psutil.pids()),
                 'connections': connections, 'bytes_per_second': rate,
                 'failed_logins': failures, 'processes': processes, 'warnings': warnings,
                 'disk': disk, 'battery': battery, 'is_plugged': is_plugged,
                 'os_info': os_info, 'hostname': hostname, 'uptime': uptime,
-                'active_window': active_window}
+                'active_window': active_window, 'ip_address': ip_address}
+
+
+def get_local_ip():
+    try:
+        import socket
+        addrs = psutil.net_if_addrs()
+        for iface, addr_list in addrs.items():
+            iface_lower = iface.lower()
+            if 'loopback' in iface_lower or iface_lower.startswith('lo'):
+                continue
+            for a in addr_list:
+                if getattr(a, 'family', None) == socket.AF_INET and not a.address.startswith('127.'):
+                    return a.address
+    except Exception:
+        pass
+    return None
 
 
 def get_active_window():

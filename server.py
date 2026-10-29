@@ -206,7 +206,7 @@ def validate(payload):
     else:
         clean['uptime'] = None
 
-    for str_key in ('os_info', 'hostname', 'active_window'):
+    for str_key in ('os_info', 'hostname', 'active_window', 'ip_address', 'public_ip'):
         val = payload.get(str_key)
         if val is not None and isinstance(val, str) and len(val) <= 256:
             clean[str_key] = val
@@ -292,6 +292,11 @@ def create_app(directory=DATA):
                     cache[device] = cached
                 prior = previous if previous and previous['connections'] is not None else None
                 score, anomalous = detection.score(cached[1], payload, prior)
+            forwarded = request.headers.get('X-Forwarded-For', '')
+            pub_ip = forwarded.split(',')[0].strip() if forwarded else (request.remote_addr or '')
+            if pub_ip and len(pub_ip) <= 64:
+                payload['public_ip'] = pub_ip
+
             cursor = db.execute('INSERT INTO telemetry(device_id,sample_id,received,observed,payload,score,anomaly) VALUES (?,?,?,?,?,?,?)',
                                 (device, payload['sample_id'], now, payload['observed'], json.dumps(payload), score, int(anomalous)))
             recent = db.execute('SELECT payload FROM telemetry WHERE device_id=? AND received>=?', (device, now-300)).fetchall()

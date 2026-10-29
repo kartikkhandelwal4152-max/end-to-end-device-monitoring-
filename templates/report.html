@@ -297,6 +297,7 @@ td {
           <tr>
             <th>Device ID</th>
             <th>Operating System / Hostname</th>
+            <th>Network IP (LAN / WAN)</th>
             <th>Status</th>
             <th>CPU</th>
             <th>RAM</th>
@@ -313,6 +314,16 @@ td {
               {{ d.telemetry.os_info or 'Unknown OS' }}
               {% if d.telemetry.hostname %}
               <br><small style="color:var(--muted)">{{ d.telemetry.hostname }}</small>
+              {% endif %}
+            </td>
+            <td>
+              {% if d.telemetry.ip_address %}
+              <code>{{ d.telemetry.ip_address }}</code>
+              {% else %}
+              <span style="color:var(--muted)">—</span>
+              {% endif %}
+              {% if d.telemetry.public_ip %}
+              <br><small style="color:var(--muted)">WAN: {{ d.telemetry.public_ip }}</small>
               {% endif %}
             </td>
             <td>
