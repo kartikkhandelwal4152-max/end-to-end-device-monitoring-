@@ -120,6 +120,77 @@ def send_telegram(db_path, device, severity, kind, message):
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def send_mobile_sms(db_path, device, severity, kind, message):
+    def _worker():
+        try:
+            with connect(db_path) as db:
+                phone_row = db.execute("SELECT value FROM settings WHERE key='mobile_phone'").fetchone()
+                provider_row = db.execute("SELECT value FROM settings WHERE key='mobile_provider'").fetchone()
+                key_row = db.execute("SELECT value FROM settings WHERE key='mobile_api_key'").fetchone()
+                if not phone_row or not key_row:
+                    return
+                phone = phone_row['value'].strip()
+                provider = (provider_row['value'].strip() if provider_row else 'fast2sms').lower()
+                api_key = key_row['value'].strip()
+                if not phone or not api_key:
+                    return
+
+            import urllib.request
+            import urllib.parse
+
+            if provider == 'fast2sms':
+                clean_phone = re.sub(r'[^0-9]', '', phone)[-10:]
+                url = "https://www.fast2sms.com/dev/bulkV2"
+                short_msg = f"SENTINEL ALERT [{severity.upper()}]: {device} - {message[:85]}"
+                payload = json.dumps({
+                    "route": "q",
+                    "message": short_msg,
+                    "language": "english",
+                    "flash": 0,
+                    "numbers": clean_phone
+                }).encode('utf-8')
+                req = urllib.request.Request(
+                    url, data=payload,
+                    headers={"authorization": api_key, "Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=10):
+                    pass
+
+            elif provider == 'whatsapp':
+                clean_phone = phone if phone.startswith('+') else ('+' + phone)
+                text = f"🚨 *SENTINEL SECURITY ALERT*\n*Device:* `{device}`\n*Severity:* *{severity.upper()}*\n*Details:* {message}"
+                encoded = urllib.parse.quote(text)
+                url = f"https://api.callmebot.com/whatsapp.php?phone={clean_phone}&text={encoded}&apikey={api_key}"
+                req = urllib.request.Request(url, headers={"User-Agent": "Sentinel-EDR/1.0"})
+                with urllib.request.urlopen(req, timeout=10):
+                    pass
+
+            elif provider == 'twilio':
+                with connect(db_path) as db:
+                    extra_row = db.execute("SELECT value FROM settings WHERE key='mobile_extra'").fetchone()
+                extra = json.loads(extra_row['value']) if extra_row else {}
+                sid = extra.get('account_sid', '')
+                from_num = extra.get('from_number', '')
+                if sid and from_num:
+                    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+                    data = urllib.parse.urlencode({
+                        'To': phone,
+                        'From': from_num,
+                        'Body': f"SENTINEL EDR ALERT [{severity.upper()}]: {device} - {message[:120]}"
+                    }).encode('utf-8')
+                    import base64
+                    creds = base64.b64encode(f"{sid}:{api_key}".encode('utf-8')).decode('utf-8')
+                    req = urllib.request.Request(url, data=data, headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+                    with urllib.request.urlopen(req, timeout=10):
+                        pass
+
+        except Exception as exc:
+            print(f"[MOBILE SMS ALERT ERROR] {exc}", flush=True)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def digest(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -292,6 +363,7 @@ def create_app(directory=DATA):
             db.execute('INSERT INTO alerts(device_id,created,kind,severity,message) VALUES (?,?,?,?,?)',
                        (device, now, kind, severity, message))
             send_telegram(path, device, severity, kind, message)
+            send_mobile_sms(path, device, severity, kind, message)
 
     @app.post('/api/telemetry')
     def ingest():
@@ -530,6 +602,38 @@ def create_app(directory=DATA):
                 db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_chat_id', ?)", (chat_id,))
         if test:
             send_telegram(path, 'SYSTEM', 'info', 'test_notification', '✅ Sentinel: Telegram alert integration active and verified!')
+        return jsonify(status='saved')
+
+    @app.get('/api/settings/mobile_sms')
+    @admin
+    def get_mobile_sms_settings():
+        with connect(path) as db:
+            p_row = db.execute("SELECT value FROM settings WHERE key='mobile_phone'").fetchone()
+            prov_row = db.execute("SELECT value FROM settings WHERE key='mobile_provider'").fetchone()
+            k_row = db.execute("SELECT value FROM settings WHERE key='mobile_api_key'").fetchone()
+            phone = p_row['value'] if p_row else ''
+            provider = prov_row['value'] if prov_row else 'fast2sms'
+            has_key = bool(k_row and k_row['value'].strip())
+            masked_key = (k_row['value'][:4] + '...' + k_row['value'][-4:]) if has_key and len(k_row['value']) > 8 else ('****' if has_key else '')
+        return jsonify(configured=bool(phone and has_key), phone_number=phone, provider=provider, masked_key=masked_key)
+
+    @app.post('/api/settings/mobile_sms')
+    @admin
+    def set_mobile_sms_settings():
+        data = request.get_json(silent=True) or {}
+        phone = str(data.get('phone_number', '')).strip()
+        provider = str(data.get('provider', 'fast2sms')).strip().lower()
+        api_key = str(data.get('api_key', '')).strip()
+        test = bool(data.get('test'))
+        with connect(path) as db:
+            if phone:
+                db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('mobile_phone', ?)", (phone,))
+            if provider:
+                db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('mobile_provider', ?)", (provider,))
+            if api_key:
+                db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('mobile_api_key', ?)", (api_key,))
+        if test:
+            send_mobile_sms(path, 'SYSTEM', 'info', 'test_notification', 'Sentinel EDR: Mobile alert verification successful for this phone number!')
         return jsonify(status='saved')
 
     @app.get('/reports/audit')

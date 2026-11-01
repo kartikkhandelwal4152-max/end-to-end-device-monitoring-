@@ -175,6 +175,19 @@ def test_telegram_and_audit_report(setup):
     tg_get2 = c.get('/api/settings/telegram', headers=a)
     assert tg_get2.get_json()['configured'] is True
 
+    # Check mobile SMS settings endpoint
+    sms_get = c.get('/api/settings/mobile_sms', headers=a)
+    assert sms_get.status_code == 200
+    assert sms_get.get_json()['configured'] is False
+
+    sms_set = c.post('/api/settings/mobile_sms', headers=a, json={'phone_number': '9876543210', 'provider': 'fast2sms', 'api_key': 'FAKE_API_KEY_12345'})
+    assert sms_set.status_code == 200
+    assert sms_set.get_json()['status'] == 'saved'
+
+    sms_get2 = c.get('/api/settings/mobile_sms', headers=a)
+    assert sms_get2.get_json()['configured'] is True
+    assert sms_get2.get_json()['phone_number'] == '9876543210'
+
     # Audit report with Bearer auth
     report_res = c.get('/reports/audit', headers=a)
     assert report_res.status_code == 200

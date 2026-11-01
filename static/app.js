@@ -65,11 +65,29 @@ const tgForm = $('telegram-form');
 const tgTestBtn = $('tg-test-btn');
 const tgStatus = $('tg-status');
 
+const mobileSmsForm = $('mobile-sms-form');
+const mobileTestBtn = $('mobile-test-btn');
+const mobileStatus = $('mobile-sms-status');
+
 if (openTgBtn && tgCard) {
   openTgBtn.addEventListener('click', async () => {
     tgCard.hidden = !tgCard.hidden;
     if (!tgCard.hidden) {
-      tgStatus.textContent = 'Checking configuration...';
+      if (mobileStatus) mobileStatus.textContent = 'Checking phone alert status...';
+      try {
+        const smsData = await api('/api/settings/mobile_sms');
+        if (smsData.configured) {
+          mobileStatus.textContent = 'Active for ' + smsData.phone_number + ' (' + smsData.provider + ')';
+          $('mobile-phone').value = smsData.phone_number;
+          if ($('mobile-gateway')) $('mobile-gateway').value = smsData.provider;
+        } else {
+          mobileStatus.textContent = 'Not configured';
+        }
+      } catch (err) {
+        if (mobileStatus) mobileStatus.textContent = 'Error: ' + err.message;
+      }
+
+      tgStatus.textContent = 'Checking telegram...';
       try {
         const data = await api('/api/settings/telegram');
         if (data.configured) {
@@ -87,6 +105,35 @@ if (openTgBtn && tgCard) {
 
 if (closeTgBtn && tgCard) {
   closeTgBtn.addEventListener('click', () => { tgCard.hidden = true; });
+}
+
+if (mobileSmsForm) {
+  mobileSmsForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const phone_number = $('mobile-phone').value.trim();
+    const provider = $('mobile-gateway').value;
+    const api_key = $('mobile-key').value.trim();
+    mobileStatus.textContent = 'Saving phone settings...';
+    try {
+      await api('/api/settings/mobile_sms', 'POST', JSON.stringify({ phone_number, provider, api_key }));
+      mobileStatus.textContent = 'Settings saved for ' + phone_number + '!';
+      $('mobile-key').value = '';
+    } catch (err) {
+      mobileStatus.textContent = 'Failed: ' + err.message;
+    }
+  });
+}
+
+if (mobileTestBtn) {
+  mobileTestBtn.addEventListener('click', async () => {
+    mobileStatus.textContent = 'Dispatching test SMS / WhatsApp...';
+    try {
+      await api('/api/settings/mobile_sms', 'POST', JSON.stringify({ test: true }));
+      mobileStatus.textContent = 'Test message dispatched to your mobile!';
+    } catch (err) {
+      mobileStatus.textContent = 'Test failed: ' + err.message;
+    }
+  });
 }
 
 if (tgForm) {
