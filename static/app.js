@@ -314,6 +314,7 @@ async function history(){
     $('chart-message').textContent = 'Select a registered endpoint to see its metrics.';
     $('coverage').replaceChildren();
     $('processes').replaceChildren();
+    $('browser-history')?.replaceChildren();
     return;
   }
   const {samples} = await api('/api/devices/' + encodeURIComponent(device) + '/history');
@@ -327,12 +328,97 @@ async function history(){
     const actVal = latest?.active_window || 'Desktop / Inactive';
     actElem.textContent = actVal;
     const actLower = actVal.toLowerCase();
-    const badKws = ['porn', 'xxx', 'torrent', 'gambling', 'casino', 'bet365'];
+    const badKws = ['porn', 'xxx', 'torrent', 'gambling', 'casino', 'bet365', 'xnxx'];
     if (badKws.some(kw => actLower.includes(kw))) {
       actElem.style.color = '#ff7b72';
       actElem.textContent += ' ⚠️ [RESTRICTED CONTENT]';
     } else {
       actElem.style.color = '#86e1b3';
+    }
+  }
+
+  const usbBadge = $('usb-storage-badge');
+  if (usbBadge) {
+    const drives = latest?.removable_drives || [];
+    if (drives.length) {
+      usbBadge.textContent = '🚨 USB Connected: ' + drives.join(', ');
+      usbBadge.style.color = '#ffc085';
+      usbBadge.style.fontWeight = 'bold';
+    } else {
+      usbBadge.textContent = 'USB Storage: None';
+      usbBadge.style.color = 'var(--muted)';
+      usbBadge.style.fontWeight = 'normal';
+    }
+  }
+
+  const histElem = $('browser-history');
+  if (histElem) {
+    histElem.replaceChildren();
+    const historyList = latest?.browser_history || [];
+    if (!historyList.length) {
+      const emptyLi = text('li', 'No recent web browsing history collected for this endpoint.');
+      emptyLi.style.color = 'var(--muted)';
+      emptyLi.style.padding = '6px 0';
+      histElem.append(emptyLi);
+    } else {
+      const dlpDomains = ['mega.nz', 'wetransfer', 'mediafire', 'pastebin', 'anonfiles', 'dropbox', 'drive.google', 'sendspace'];
+      const badKws = ['porn', 'xxx', 'torrent', 'gambling', 'casino', 'bet365', 'xnxx'];
+      for (const h of historyList) {
+        const li = text('li', '');
+        li.style.padding = '6px 0';
+        li.style.borderBottom = '1px solid var(--line)';
+        li.style.display = 'flex';
+        li.style.alignItems = 'center';
+        li.style.gap = '8px';
+        li.style.flexWrap = 'wrap';
+
+        const urlOrTitle = (h.url || '') + ' ' + (h.title || '');
+        const lower = urlOrTitle.toLowerCase();
+        const isDlp = dlpDomains.some(d => lower.includes(d));
+        const isBad = badKws.some(k => lower.includes(k));
+
+        if (isDlp) {
+          const badge = text('span', '⚠️ DLP CLOUD EXFILTRATION RISK', 'pill');
+          badge.style.background = '#432a10';
+          badge.style.color = '#ffc085';
+          badge.style.fontSize = '9px';
+          badge.style.padding = '2px 6px';
+          li.append(badge);
+        } else if (isBad) {
+          const badge = text('span', '🚨 RESTRICTED CONTENT', 'pill');
+          badge.style.background = '#491819';
+          badge.style.color = '#ff7b72';
+          badge.style.fontSize = '9px';
+          badge.style.padding = '2px 6px';
+          li.append(badge);
+        } else {
+          const badge = text('span', '🌐 WEB', 'pill');
+          badge.style.fontSize = '9px';
+          badge.style.padding = '2px 6px';
+          li.append(badge);
+        }
+
+        const titleText = (h.title && h.title !== h.url) ? (h.title + ' — ') : '';
+        const titleSpan = text('strong', titleText);
+        titleSpan.style.color = 'var(--text)';
+        titleSpan.style.fontSize = '12px';
+
+        const urlLink = document.createElement('a');
+        urlLink.textContent = h.url;
+        urlLink.href = h.url.startsWith('http') ? h.url : '#';
+        urlLink.target = '_blank';
+        urlLink.rel = 'noopener noreferrer';
+        urlLink.style.color = isDlp ? '#ffc085' : (isBad ? '#ff7b72' : 'var(--green)');
+        urlLink.style.textDecoration = 'none';
+        urlLink.style.fontSize = '12px';
+        urlLink.style.wordBreak = 'break-all';
+
+        const textWrap = text('span', '');
+        textWrap.append(titleSpan, urlLink);
+        li.append(textWrap);
+
+        histElem.append(li);
+      }
     }
   }
 

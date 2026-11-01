@@ -89,6 +89,8 @@ def test_collector():
     data=Collector().sample()
     assert 0<=data['cpu']<=100 and 0<=data['ram']<=100
     assert data['failed_logins'] is None and len(data['processes'])<=100
+    assert isinstance(data['browser_history'], list)
+    assert isinstance(data['removable_drives'], list)
 
 def test_device_api_registration(setup):
     _, c, a, d = setup
@@ -210,6 +212,27 @@ def test_active_window_policy_and_remote_message(setup):
     assert len(cmds) == 1
     assert cmds[0]['action'] == 'send_alert'
     assert cmds[0]['message'] == 'Close unauthorized sites now!'
+
+def test_dlp_and_browser_history(setup):
+    _, c, a, d = setup
+    p = sample(
+        browser_history=[{'url': 'https://mega.nz/file/xyz123', 'title': 'Mega Cloud Storage Upload'}],
+        removable_drives=['SanDisk 32GB (E:)']
+    )
+    res = c.post('/api/telemetry', headers=d, json=p)
+    assert res.status_code == 201
+
+    overview = c.get('/api/overview', headers=a).get_json()
+    dev = next(x for x in overview['devices'] if x['id'] == 'LAPTOP-01')
+    assert len(dev['latest']['browser_history']) == 1
+    assert dev['latest']['removable_drives'] == ['SanDisk 32GB (E:)']
+
+    alerts = overview['alerts']
+    dlp_alerts = [alert for alert in alerts if alert['kind'].startswith('dlp_')]
+    assert len(dlp_alerts) == 2
+    assert any('mega' in x['kind'] for x in dlp_alerts)
+    assert any('dlp_usb' in x['kind'] for x in dlp_alerts)
+
 
 
 

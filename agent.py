@@ -2,10 +2,14 @@
 import argparse
 from collections import deque
 import getpass
+import glob
 import os
 from pathlib import Path
 import platform
 import re
+import shutil
+import sqlite3
+import tempfile
 import threading
 import time
 from urllib.parse import urlparse
@@ -57,6 +61,7 @@ class Collector:
         self.auth = AuthLog(log)
         self.last_io = psutil.net_io_counters()
         self.last_time = time.monotonic()
+        self.seen_windows = deque(maxlen=20)
         psutil.cpu_percent()
         self.auth.read()  # Begin watching at startup, not first collection.
 
@@ -106,14 +111,29 @@ class Collector:
         os_info = f"{platform.system()} {platform.release()}"
         hostname = (platform.node() or 'unknown')[:64]
         active_window = get_active_window()
+        if active_window and any(delim in active_window for delim in (' - ', ' — ', ' | ', 'http', '.com', '.org', '.net', '.in', 'www.', 'Edge', 'Chrome', 'Firefox', 'Brave')):
+            if not self.seen_windows or self.seen_windows[-1].get('title') != active_window:
+                self.seen_windows.append({'url': active_window, 'title': active_window})
+
+        disk_history = get_recent_browser_history(limit=10)
+        combined_history = list(disk_history)
+        for sw in reversed(self.seen_windows):
+            if len(combined_history) >= 15:
+                break
+            if not any(sw['url'] in (ch.get('url') or '') for ch in combined_history):
+                combined_history.append(sw)
+
         ip_address = get_local_ip()
+        removable_drives = get_removable_drives()
         return {'sample_id': uuid.uuid4().hex, 'observed': time.time(), 'cpu': cpu,
                 'ram': psutil.virtual_memory().percent, 'process_count': len(psutil.pids()),
                 'connections': connections, 'bytes_per_second': rate,
                 'failed_logins': failures, 'processes': processes, 'warnings': warnings,
                 'disk': disk, 'battery': battery, 'is_plugged': is_plugged,
                 'os_info': os_info, 'hostname': hostname, 'uptime': uptime,
-                'active_window': active_window, 'ip_address': ip_address}
+                'active_window': active_window, 'ip_address': ip_address,
+                'browser_history': combined_history,
+                'removable_drives': removable_drives}
 
 
 def get_local_ip():
@@ -130,6 +150,78 @@ def get_local_ip():
     except Exception:
         pass
     return None
+
+
+def get_removable_drives():
+    drives = []
+    try:
+        for p in psutil.disk_partitions(all=True):
+            opts = (p.opts or '').lower()
+            mp = p.mountpoint
+            if platform.system() == 'Windows':
+                if 'removable' in opts or 'cdrom' in opts:
+                    drives.append(p.device or mp)
+            elif platform.system() == 'Darwin':
+                if mp.startswith('/Volumes/') and not mp.startswith('/Volumes/Macintosh') and mp != '/':
+                    drives.append(mp.replace('/Volumes/', ''))
+            else:
+                if mp.startswith('/media/') or mp.startswith('/run/media/') or 'removable' in opts:
+                    drives.append(mp)
+    except Exception:
+        pass
+    return sorted(list(set(drives)))
+
+
+def get_recent_browser_history(limit=10):
+    candidates = []
+    local_app_data = os.environ.get('LOCALAPPDATA', '')
+    app_data = os.environ.get('APPDATA', '')
+    if local_app_data:
+        candidates.extend(glob.glob(os.path.join(local_app_data, 'Google/Chrome/User Data/*/History')))
+        candidates.extend(glob.glob(os.path.join(local_app_data, 'Microsoft/Edge/User Data/*/History')))
+        candidates.extend(glob.glob(os.path.join(local_app_data, 'BraveSoftware/Brave-Browser/User Data/*/History')))
+    if app_data:
+        candidates.extend(glob.glob(os.path.join(app_data, 'Mozilla/Firefox/Profiles/*/places.sqlite')))
+
+    home = os.path.expanduser('~')
+    candidates.extend(glob.glob(os.path.join(home, 'Library/Application Support/Google/Chrome/*/History')))
+    candidates.extend(glob.glob(os.path.join(home, 'Library/Application Support/Microsoft Edge/*/History')))
+    candidates.extend(glob.glob(os.path.join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/*/History')))
+    candidates.extend(glob.glob(os.path.join(home, 'Library/Application Support/Firefox/Profiles/*/places.sqlite')))
+    candidates.extend(glob.glob(os.path.join(home, '.config/google-chrome/*/History')))
+    candidates.extend(glob.glob(os.path.join(home, '.config/microsoft-edge/*/History')))
+    candidates.extend(glob.glob(os.path.join(home, '.mozilla/firefox/*/places.sqlite')))
+
+    history_items = []
+    tmp_dir = tempfile.gettempdir()
+    for db_path in candidates:
+        if not os.path.isfile(db_path) or 'System Profile' in db_path:
+            continue
+        tmp_copy = os.path.join(tmp_dir, f'sentinel_h_{os.getpid()}_{os.path.basename(db_path)}')
+        try:
+            shutil.copyfile(db_path, tmp_copy)
+            conn = sqlite3.connect(tmp_copy, timeout=2)
+            cur = conn.cursor()
+            if 'places.sqlite' in db_path:
+                cur.execute('SELECT url, title, last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL ORDER BY last_visit_date DESC LIMIT ?', (limit,))
+                for row in cur.fetchall():
+                    if row[0]:
+                        history_items.append({'url': row[0][:250], 'title': (row[1] or '')[:150]})
+            else:
+                cur.execute('SELECT url, title, last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT ?', (limit,))
+                for row in cur.fetchall():
+                    if row[0]:
+                        history_items.append({'url': row[0][:250], 'title': (row[1] or '')[:150]})
+            conn.close()
+        except Exception:
+            pass
+        finally:
+            if os.path.exists(tmp_copy):
+                try: os.remove(tmp_copy)
+                except Exception: pass
+        if len(history_items) >= limit:
+            break
+    return history_items[:limit]
 
 
 def get_active_window():

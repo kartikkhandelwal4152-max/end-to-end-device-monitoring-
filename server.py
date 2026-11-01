@@ -72,6 +72,12 @@ RESTRICTED_KEYWORDS = (
     'darknet', 'silkroad'
 )
 
+DLP_EXFILTRATION_DOMAINS = (
+    'mega.nz', 'wetransfer.com', 'mediafire.com', 'pastebin.com', 'anonfiles.com',
+    'sendspace.com', 'filetransfer.io', 'gofile.io', 'catbox.moe', 'transfer.sh',
+    'dropbox.com', '1fichier.com', 'rapidgator.net'
+)
+
 
 def check_process_threat(name):
     if not isinstance(name, str):
@@ -213,6 +219,25 @@ def validate(payload):
         else:
             clean[str_key] = None
 
+    raw_hist = payload.get('browser_history', [])
+    clean_hist = []
+    if isinstance(raw_hist, list):
+        for item in raw_hist[:25]:
+            if isinstance(item, dict) and isinstance(item.get('url'), str):
+                clean_hist.append({
+                    'url': item['url'][:500],
+                    'title': str(item.get('title') or '')[:200]
+                })
+    clean['browser_history'] = clean_hist
+
+    raw_drives = payload.get('removable_drives', [])
+    clean_drives = []
+    if isinstance(raw_drives, list):
+        for d in raw_drives[:10]:
+            if isinstance(d, str):
+                clean_drives.append(d[:100])
+    clean['removable_drives'] = clean_drives
+
     return clean
 
 
@@ -325,6 +350,28 @@ def create_app(directory=DATA):
                         alert(db, device, now, f'policy_{bad_kw}', 'high',
                               f'Policy violation: restricted activity/website detected in active window: "{payload["active_window"]}".')
                         break
+
+            # DLP / Data Exfiltration checks in active window & browser history
+            checked_sites = []
+            if payload.get('active_window'):
+                checked_sites.append(payload['active_window'].lower())
+            for h in payload.get('browser_history', []):
+                checked_sites.append((h.get('url', '') + ' ' + h.get('title', '')).lower())
+
+            for site_str in checked_sites:
+                matched_dlp = next((d for d in DLP_EXFILTRATION_DOMAINS if d in site_str), None)
+                if matched_dlp:
+                    clean_tag = matched_dlp.replace('.', '_')
+                    alert(db, device, now, f'dlp_{clean_tag}', 'high',
+                          f'[DLP / Confidentiality Alert] Potential data exfiltration vector: accessed external file-transfer repository "{matched_dlp}".')
+                    break
+
+            # Removable storage check (USB exfiltration)
+            removable = payload.get('removable_drives', [])
+            if removable:
+                drives_str = ', '.join(removable)
+                alert(db, device, now, 'dlp_usb', 'medium',
+                      f'[MITRE ATT&CK T1052: Exfiltration Over Physical Medium] Removable USB/External storage connected: {drives_str}. Data loss risk.')
 
             cmd_rows = db.execute('SELECT id, action, payload FROM commands WHERE device_id=? AND executed=0 ORDER BY id ASC', (device,)).fetchall()
             commands_to_send = []
@@ -500,7 +547,8 @@ def create_app(directory=DATA):
                 'high_alerts': high_alerts,
                 'compliance_score': score,
                 'generated_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
-                'threat_processes': sum(1 for a in alerts if a['kind'].startswith('threat_'))
+                'threat_processes': sum(1 for a in alerts if a['kind'].startswith('threat_')),
+                'dlp_events': sum(1 for a in alerts if a['kind'].startswith('dlp_') or a['kind'].startswith('policy_'))
             }
         return render_template('report.html', summary=summary, devices=devices, alerts=alerts, commands=commands)
 

@@ -283,6 +283,12 @@ td {
       <span class="value" style="color:{% if summary.threat_processes > 0 %}var(--red){% else %}var(--green){% endif %}">{{ summary.threat_processes }}</span>
       <span class="subtext">Suspicious tool executions flagged</span>
     </div>
+
+    <div class="metric-card">
+      <span class="label">DLP & Policy Incidents</span>
+      <span class="value" style="color:{% if summary.dlp_events > 0 %}var(--orange){% else %}var(--green){% endif %}">{{ summary.dlp_events }}</span>
+      <span class="subtext">Exfiltration & restricted web events</span>
+    </div>
   </div>
 
   <!-- Device Inventory & Compliance -->
@@ -389,6 +395,10 @@ td {
             <td>
               {% if a.kind.startswith('threat_') %}
               <span class="badge-pill badge-mitre">MITRE ATT&CK</span>
+              {% elif a.kind.startswith('dlp_') %}
+              <span class="badge-pill" style="background:#432a10;color:var(--orange);">DLP / CONFIDENTIALITY</span>
+              {% elif a.kind.startswith('policy_') %}
+              <span class="badge-pill" style="background:#491819;color:var(--red);">POLICY VIOLATION</span>
               {% else %}
               <span style="font-family:monospace;font-size:12px;">{{ a.kind }}</span>
               {% endif %}

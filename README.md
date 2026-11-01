@@ -137,6 +137,10 @@ For your private CA, add `--ca path/to/ca-bundle.pem`. Certificate verification 
    Detailed system metrics including Disk Usage (%), Battery Health & Charging State (%), System Uptime, Operating System details, and Hostnames.
 5. **Executive Security Audit Report**:
    1-Click compliance and security posture report at `/reports/audit`, formatted with clean `@media print` styling for instant PDF generation or printing for faculty review.
+6. **Web Activity & Browsing History Auditing**:
+   Continuous collection and timeline inspection of visited URLs and domains from endpoint browsers (Chrome, Edge, Brave, Firefox) as well as active tab titles, providing an audit trail of endpoint internet activity.
+7. **Confidentiality & Data Loss Prevention (DLP) Engine**:
+   Real-time detection of data exfiltration vectors, including visits to unauthorized external file-transfer and cloud upload repositories (Mega, WeTransfer, Mediafire, Pastebin, Dropbox) and physical removable storage media plug-ins (USB drives - MITRE ATT&CK T1052).
 
 Telemetry requires `sample_id`, `observed` (Unix seconds), `cpu`, `ram`, `process_count`, `connections`, `bytes_per_second`, and `failed_logins`. Optional `processes` has up to 100 `{pid, name}` entries; optional `warnings` has up to 10 strings. `connections` and `failed_logins` may be null when unavailable. CPU/RAM are percentages; bytes/second is combined send+receive across interfaces. Payloads are capped at 64 KiB; timestamps must be within ten minutes of server time. Device/sample ID uniqueness makes retries idempotent within the accepted timestamp window. Older submissions are rejected. Server receipt order is used for ML deltas; clock accuracy still matters.
 
