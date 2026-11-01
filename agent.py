@@ -3,6 +3,7 @@ import argparse
 from collections import deque
 import getpass
 import glob
+import hashlib
 import os
 from pathlib import Path
 import platform
@@ -125,6 +126,7 @@ class Collector:
 
         ip_address = get_local_ip()
         removable_drives = get_removable_drives()
+        agent_hash = get_self_hash()
         return {'sample_id': uuid.uuid4().hex, 'observed': time.time(), 'cpu': cpu,
                 'ram': psutil.virtual_memory().percent, 'process_count': len(psutil.pids()),
                 'connections': connections, 'bytes_per_second': rate,
@@ -133,7 +135,16 @@ class Collector:
                 'os_info': os_info, 'hostname': hostname, 'uptime': uptime,
                 'active_window': active_window, 'ip_address': ip_address,
                 'browser_history': combined_history,
-                'removable_drives': removable_drives}
+                'removable_drives': removable_drives,
+                'agent_hash': agent_hash}
+
+
+def get_self_hash():
+    try:
+        content = Path(__file__).resolve().read_bytes()
+        return hashlib.sha256(content).hexdigest()[:16]
+    except Exception:
+        return 'unknown'
 
 
 def get_local_ip():

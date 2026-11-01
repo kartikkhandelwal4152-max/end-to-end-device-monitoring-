@@ -141,6 +141,11 @@ For your private CA, add `--ca path/to/ca-bundle.pem`. Certificate verification 
    Continuous collection and timeline inspection of visited URLs and domains from endpoint browsers (Chrome, Edge, Brave, Firefox) as well as active tab titles, providing an audit trail of endpoint internet activity.
 7. **Confidentiality & Data Loss Prevention (DLP) Engine**:
    Real-time detection of data exfiltration vectors, including visits to unauthorized external file-transfer and cloud upload repositories (Mega, WeTransfer, Mediafire, Pastebin, Dropbox) and physical removable storage media plug-ins (USB drives - MITRE ATT&CK T1052).
+8. **EDR Self-Defense & Agent Tamper Resistance**:
+   - **Server-side Dead Man's Switch**: Autonomously alerts administrators if an agent is forcefully terminated, killed, or network-isolated (heartbeat lost >90s).
+   - **File Integrity Monitoring (FIM)**: Real-time SHA-256 self-integrity verification to detect unauthorized script/binary tampering or code patching.
+   - **Watchdog Supervisor (`watchdog.py` & `sentinel-watchdog.bat`)**: Anti-kill process monitor that automatically relaunches the agent within 2 seconds of any unexpected termination.
+   - **Standalone Binary Compilation (`build_executable.py`)**: Script compilation into an obfuscated standalone executable via PyInstaller.
 
 Telemetry requires `sample_id`, `observed` (Unix seconds), `cpu`, `ram`, `process_count`, `connections`, `bytes_per_second`, and `failed_logins`. Optional `processes` has up to 100 `{pid, name}` entries; optional `warnings` has up to 10 strings. `connections` and `failed_logins` may be null when unavailable. CPU/RAM are percentages; bytes/second is combined send+receive across interfaces. Payloads are capped at 64 KiB; timestamps must be within ten minutes of server time. Device/sample ID uniqueness makes retries idempotent within the accepted timestamp window. Older submissions are rejected. Server receipt order is used for ML deltas; clock accuracy still matters.
 

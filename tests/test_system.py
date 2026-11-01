@@ -91,6 +91,7 @@ def test_collector():
     assert data['failed_logins'] is None and len(data['processes'])<=100
     assert isinstance(data['browser_history'], list)
     assert isinstance(data['removable_drives'], list)
+    assert isinstance(data['agent_hash'], str) and len(data['agent_hash']) > 0
 
 def test_device_api_registration(setup):
     _, c, a, d = setup
@@ -232,6 +233,31 @@ def test_dlp_and_browser_history(setup):
     assert len(dlp_alerts) == 2
     assert any('mega' in x['kind'] for x in dlp_alerts)
     assert any('dlp_usb' in x['kind'] for x in dlp_alerts)
+
+def test_edr_self_defense_fim_and_dead_man_switch(setup):
+    path, c, a, d = setup
+    # 1. Telemetry with normal agent hash
+    res = c.post('/api/telemetry', headers=d, json=sample(agent_hash="sha256:orig1234"))
+    assert res.status_code == 201
+
+    # 2. Telemetry with modified agent hash (Code tampering)
+    res2 = c.post('/api/telemetry', headers=d, json=sample(agent_hash="sha256:tampered5678"))
+    assert res2.status_code == 201
+
+    overview = c.get('/api/overview', headers=a).get_json()
+    tamper_alerts = [x for x in overview['alerts'] if x['kind'] == 'tamper_code_modified']
+    assert len(tamper_alerts) == 1
+    assert "Agent script modification detected" in tamper_alerts[0]['message']
+
+    # 3. Dead Man's Switch (heartbeat lost > 90s)
+    with server.connect(path / 'sentinel.db') as db:
+        db.execute('UPDATE telemetry SET received=? WHERE device_id=?', (time.time() - 150, 'LAPTOP-01'))
+
+    overview2 = c.get('/api/overview', headers=a).get_json()
+    silent_alerts = [x for x in overview2['alerts'] if x['kind'] == 'tamper_heartbeat_lost']
+    assert len(silent_alerts) == 1
+    assert "Heartbeat lost" in silent_alerts[0]['message']
+
 
 
 

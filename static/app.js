@@ -206,6 +206,15 @@ async function refresh(){
         winDiv.title = 'Active window: ' + d.latest.active_window;
         osTd.append(winDiv);
       }
+
+      if (d.latest && d.latest.agent_hash) {
+        const fimDiv = text('div', '🛡️ Agent FIM: Verified (' + d.latest.agent_hash.substring(0, 8) + ')');
+        fimDiv.style.fontSize = '10px';
+        fimDiv.style.color = '#86e1b3';
+        fimDiv.style.marginTop = '2px';
+        fimDiv.title = 'Cryptographic SHA-256 self-integrity verified: ' + d.latest.agent_hash;
+        osTd.append(fimDiv);
+      }
       row.append(osTd);
 
       const state = text('td', '');

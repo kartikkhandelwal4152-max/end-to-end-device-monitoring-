@@ -212,7 +212,7 @@ def validate(payload):
     else:
         clean['uptime'] = None
 
-    for str_key in ('os_info', 'hostname', 'active_window', 'ip_address', 'public_ip'):
+    for str_key in ('os_info', 'hostname', 'active_window', 'ip_address', 'public_ip', 'agent_hash'):
         val = payload.get(str_key)
         if val is not None and isinstance(val, str) and len(val) <= 256:
             clean[str_key] = val
@@ -373,6 +373,12 @@ def create_app(directory=DATA):
                 alert(db, device, now, 'dlp_usb', 'medium',
                       f'[MITRE ATT&CK T1052: Exfiltration Over Physical Medium] Removable USB/External storage connected: {drives_str}. Data loss risk.')
 
+            # Agent Self-Defense: Code Integrity Monitoring
+            if previous and previous.get('agent_hash') and payload.get('agent_hash'):
+                if previous['agent_hash'] != payload['agent_hash']:
+                    alert(db, device, now, 'tamper_code_modified', 'critical',
+                          f"[EDR SELF-DEFENSE ALERT] Agent script modification detected on '{device}'! Prior SHA-256: {previous['agent_hash'][:8]}, New: {payload['agent_hash'][:8]}.")
+
             cmd_rows = db.execute('SELECT id, action, payload FROM commands WHERE device_id=? AND executed=0 ORDER BY id ASC', (device,)).fetchall()
             commands_to_send = []
             if cmd_rows:
@@ -393,18 +399,32 @@ def create_app(directory=DATA):
     @app.get('/api/overview')
     @admin
     def overview():
+        now = time.time()
         with connect(path) as db:
             devices = []
             for device in db.execute('SELECT id FROM devices ORDER BY id'):
                 row = db.execute('SELECT * FROM telemetry WHERE device_id=? ORDER BY id DESC LIMIT 1', (device['id'],)).fetchone()
                 model = db.execute('SELECT trained,sample_count FROM models WHERE device_id=?', (device['id'],)).fetchone()
-                devices.append({'id': device['id'], 'online': bool(row and time.time()-row['received'] < 60),
+                online = bool(row and now - row['received'] < 60)
+
+                # Dead Man's Switch (EDR Self-Defense): If device was seen before, but went silent (>90s)
+                if row and not online and 90 <= (now - row['received']) < 86400:
+                    recent_tamper = db.execute(
+                        'SELECT 1 FROM alerts WHERE device_id=? AND kind=? AND created>?',
+                        (device['id'], 'tamper_heartbeat_lost', now - 900)
+                    ).fetchone()
+                    if not recent_tamper:
+                        elapsed = int(now - row['received'])
+                        alert(db, device['id'], now, 'tamper_heartbeat_lost', 'high',
+                              f"[EDR SELF-DEFENSE] Heartbeat lost on '{device['id']}' ({elapsed}s silent). Suspected agent kill, network isolation, or tampering.")
+
+                devices.append({'id': device['id'], 'online': online,
                                 'last_seen': row['received'] if row else None,
                                 'latest': json.loads(row['payload']) if row else None,
                                 'model': dict(model) if model else None})
             alerts = [dict(row) for row in db.execute('SELECT * FROM alerts ORDER BY id DESC LIMIT 100')]
             count = db.execute('SELECT COUNT(*) FROM alerts WHERE acknowledged=0').fetchone()[0]
-        return jsonify(devices=devices, alerts=alerts, open_alerts=count, server_time=time.time())
+        return jsonify(devices=devices, alerts=alerts, open_alerts=count, server_time=now)
 
     @app.get('/api/devices/<device>/history')
     @admin
