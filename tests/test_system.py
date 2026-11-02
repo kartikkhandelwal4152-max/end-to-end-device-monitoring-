@@ -9,7 +9,9 @@ def setup(tmp_path):
     admin=server.initialize(tmp_path)
     token=server.register(tmp_path,'LAPTOP-01')
     app=server.create_app(tmp_path);app.testing=True
-    return tmp_path,app.test_client(),{'Authorization':'Bearer '+admin},{'Authorization':'Bearer '+token,'X-Device-ID':'LAPTOP-01'}
+    client=app.test_client()
+    session_token=client.post('/api/auth/login',json={'username':'admin','password':admin}).get_json()['session_token']
+    return tmp_path,client,{'Authorization':'Bearer '+session_token},{'Authorization':'Bearer '+token,'X-Device-ID':'LAPTOP-01'}
 
 def sample(**changes):
     value={'sample_id':uuid.uuid4().hex,'observed':time.time(),'cpu':20,'ram':40,'process_count':100,'connections':10,'bytes_per_second':2500,'failed_logins':0,'processes':[]}
@@ -101,9 +103,9 @@ def test_device_api_registration(setup):
     assert res.status_code == 201
     data = res.get_json()
     assert data['device_id'] == 'NEW-DEV' and len(data['token']) > 20
-    res2 = c.post('/api/devices/register', headers=a, json={'device_id': 'NEW-DEV-2', 'token': 'fixed-token-12345'})
+    res2 = c.post('/api/devices/register', headers=a, json={'device_id': 'NEW-DEV-2', 'token': 'fixed-test-token-with-at-least-24-chars'})
     assert res2.status_code == 201
-    assert res2.get_json()['token'] == 'fixed-token-12345'
+    assert res2.get_json()['token'] == 'fixed-test-token-with-at-least-24-chars'
 
 def test_delete_device(setup):
     _, c, a, d = setup
@@ -143,11 +145,12 @@ def test_extended_telemetry_and_threat_detection(setup):
 def test_remote_kill_process_command_delivery(setup):
     _, c, a, d = setup
     # Admin queues a kill process command
-    kill_res = c.post('/api/devices/LAPTOP-01/kill_process', headers=a, json={'pid': 4040, 'name': 'xmrig'})
+    kill_res = c.post('/api/devices/LAPTOP-01/kill_process', headers=a, json={'pid': 4040, 'name': 'xmrig', 'create_time': 123456.0})
     assert kill_res.status_code == 200
     assert kill_res.get_json()['status'] == 'queued'
+    cmd_id = kill_res.get_json()['command_id']
 
-    # Endpoint sends telemetry heartbeat
+    # Endpoint sends telemetry heartbeat; command status transitions to 'delivered'
     hb_res = c.post('/api/telemetry', headers=d, json=sample())
     assert hb_res.status_code == 201
     cmds = hb_res.get_json().get('commands', [])
@@ -155,7 +158,16 @@ def test_remote_kill_process_command_delivery(setup):
     assert cmds[0]['action'] == 'kill_process'
     assert cmds[0]['pid'] == 4040
 
-    # Next heartbeat should have no pending commands
+    # Sending a response does not mean command succeeded: unacknowledged command is retried
+    hb_retry = c.post('/api/telemetry', headers=d, json=sample())
+    assert len(hb_retry.get_json().get('commands', [])) == 1
+
+    # Endpoint sends authenticated acknowledgement with execution result
+    ack_res = c.post(f'/api/commands/{cmd_id}/ack', headers=d, json={'status': 'succeeded', 'result': 'Verified process exit: xmrig (PID 4040) stopped.'})
+    assert ack_res.status_code == 200
+    assert ack_res.get_json()['status'] == 'recorded'
+
+    # Next heartbeat now has no pending commands
     hb_res2 = c.post('/api/telemetry', headers=d, json=sample())
     assert hb_res2.status_code == 201
     assert hb_res2.get_json().get('commands', []) == []
@@ -188,15 +200,15 @@ def test_telegram_and_audit_report(setup):
     assert sms_get2.get_json()['configured'] is True
     assert sms_get2.get_json()['phone_number'] == '9876543210'
 
-    # Audit report with Bearer auth
+    # Audit report with Bearer auth works
     report_res = c.get('/reports/audit', headers=a)
     assert report_res.status_code == 200
     assert b'EXECUTIVE SECURITY AUDIT' in report_res.data
 
-    # Audit report with token query parameter
+    # Audit report with token query parameter must be rejected (Phase 1.2 requirement)
     report_param_res = c.get(f'/reports/audit?token={admin_token}')
-    assert report_param_res.status_code == 200
-    assert b'EXECUTIVE SECURITY AUDIT' in report_param_res.data
+    assert report_param_res.status_code == 401
+    assert b'Administrator authentication required' in report_param_res.data
 
 def test_active_window_policy_and_remote_message(setup):
     _, c, a, d = setup
@@ -262,14 +274,21 @@ def test_edr_self_defense_fim_and_dead_man_switch(setup):
     assert len(tamper_alerts) == 1
     assert "Agent script modification detected" in tamper_alerts[0]['message']
 
-    # 3. Dead Man's Switch (heartbeat lost > 90s)
+    # 3. Dead Man's Switch: GET /api/overview is strictly read-only and will not mutate state
     with server.connect(path / 'sentinel.db') as db:
         db.execute('UPDATE telemetry SET received=? WHERE device_id=?', (time.time() - 150, 'LAPTOP-01'))
 
+    overview_ro = c.get('/api/overview', headers=a).get_json()
+    assert not any(x['kind'] == 'device_offline' for x in overview_ro['alerts'])
+
+    # Independent HeartbeatMonitor background worker detects silence and generates offline alert
+    with server.connect(path / 'sentinel.db') as db:
+        c.application.heartbeat_monitor.check_devices(db, time.time())
+
     overview2 = c.get('/api/overview', headers=a).get_json()
-    silent_alerts = [x for x in overview2['alerts'] if x['kind'] == 'tamper_heartbeat_lost']
-    assert len(silent_alerts) == 1
-    assert "Heartbeat lost" in silent_alerts[0]['message']
+    offline_alerts = [x for x in overview2['alerts'] if x['kind'] == 'device_offline']
+    assert len(offline_alerts) == 1
+    assert "heartbeat lost" in offline_alerts[0]['message']
 
 
 

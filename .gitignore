@@ -9,3 +9,4 @@ faculty-demo/
 .DS_Store
 node_modules/
 package*.json
+*.zip

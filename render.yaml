@@ -2,12 +2,17 @@ services:
   - type: web
     name: sentinel-backend
     runtime: docker
-    plan: free
+    plan: starter
     region: oregon
+    disk:
+      name: sentinel-data
+      mountPath: /data
+      sizeGB: 1
+    healthCheckPath: /api/ready
     envVars:
       - key: SENTINEL_DATA
         value: /data
-      - key: SENTINEL_ADMIN_TOKEN
+      - key: SENTINEL_ADMIN_PASSWORD
         generateValue: true
       - key: SENTINEL_DEFAULT_DEVICE
         value: FRIEND-MAC

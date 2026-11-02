@@ -1,4 +1,5 @@
 'use strict';
+let currentUser = '', currentRole = '';
 let token = '', timer = null, chart = null, busy = false;
 const $ = id => document.getElementById(id);
 const text = (tag, value, cls) => { const e=document.createElement(tag); e.textContent=value; if(cls)e.className=cls; return e; };
@@ -33,13 +34,21 @@ function disconnect(){
   if(chart){chart.destroy();chart=null;}
 }
 
-$('logout').addEventListener('click', disconnect);
+$('logout').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', 'POST'); disconnect(); }
+  catch(e) { showError(new Error('Logout could not be confirmed. Retry while connected.')); }
+});
 
 $('login').addEventListener('submit', async event => {
   event.preventDefault();
-  token = $('token').value.trim();
-  $('token').value = '';
   try {
+    const response = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:$('username').value.trim(), password:$('password').value, totp_code:$('totp-code').value.trim()})});
+    const auth = await response.json();
+    if(!response.ok) throw new Error(auth.error || 'Login failed.');
+    token = auth.session_token; currentUser = auth.username; currentRole = auth.role;
+    $('password').value = ''; $('totp-code').value = '';
+    $('register-device-form').hidden = currentRole !== 'administrator';
+    $('open-telegram-btn').hidden = currentRole !== 'administrator';
     await refresh();
     $('workspace').hidden = false;
     $('login').hidden = true;
@@ -50,11 +59,46 @@ $('login').addEventListener('submit', async event => {
   }
 });
 
+$('mfa-setup').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/users/' + encodeURIComponent(currentUser) + '/mfa/setup', 'POST');
+    $('mfa-secret').textContent = r.totp_secret;
+    $('mfa-enrollment').hidden = false;
+  } catch(e) { showError(e); }
+});
+$('mfa-enable').addEventListener('click', async () => {
+  try {
+    await api('/api/users/' + encodeURIComponent(currentUser) + '/mfa/enable', 'POST', JSON.stringify({code:$('mfa-confirm').value.trim()}));
+    $('mfa-secret').textContent = ''; $('mfa-confirm').value = '';
+    $('mfa-enrollment').hidden = true; disconnect();
+    $('status').textContent = 'MFA enabled. Sign in again with your authenticator code.';
+  } catch(e) { showError(e); }
+});
+
 const openReportBtn = $('open-report-btn');
 if (openReportBtn) {
-  openReportBtn.addEventListener('click', () => {
+  openReportBtn.addEventListener('click', async () => {
     if (!token) return;
-    window.open('/reports/audit?token=' + encodeURIComponent(token), '_blank');
+    const preview = window.open('about:blank', '_blank');
+    if (!preview) { showError(new Error('Allow pop-ups to view this report.')); return; }
+    preview.opener = null;
+    try {
+      const response = await fetch('/reports/audit', {
+        headers: { Authorization: 'Bearer ' + token }
+      });
+      if (!response.ok) {
+        let msg = 'Failed to load report (' + response.status + ').';
+        try { const data = await response.json(); if (data.error) msg = data.error; } catch(e){}
+        throw new Error(msg);
+      }
+      const html = await response.text();
+      const blob = new Blob([html], { type: 'text/html' });
+      const blobUrl = URL.createObjectURL(blob);
+      preview.location.replace(blobUrl);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch(err) {
+      preview.close(); showError(err);
+    }
   });
 }
 
@@ -80,6 +124,7 @@ if (openTgBtn && tgCard) {
           mobileStatus.textContent = 'Active for ' + smsData.phone_number + ' (' + smsData.provider + ')';
           $('mobile-phone').value = smsData.phone_number;
           if ($('mobile-gateway')) $('mobile-gateway').value = smsData.provider;
+          $('twilio-from').value = smsData.from_number || ''; 
         } else {
           mobileStatus.textContent = 'Not configured';
         }
@@ -115,7 +160,7 @@ if (mobileSmsForm) {
     const api_key = $('mobile-key').value.trim();
     mobileStatus.textContent = 'Saving phone settings...';
     try {
-      await api('/api/settings/mobile_sms', 'POST', JSON.stringify({ phone_number, provider, api_key }));
+      await api('/api/settings/mobile_sms', 'POST', JSON.stringify({ phone_number, provider, api_key, account_sid:$('twilio-sid').value.trim(), from_number:$('twilio-from').value.trim() }));
       mobileStatus.textContent = 'Settings saved for ' + phone_number + '!';
       $('mobile-key').value = '';
     } catch (err) {
@@ -128,7 +173,7 @@ if (mobileTestBtn) {
   mobileTestBtn.addEventListener('click', async () => {
     mobileStatus.textContent = 'Dispatching test SMS / WhatsApp...';
     try {
-      await api('/api/settings/mobile_sms', 'POST', JSON.stringify({ test: true }));
+      await api('/api/settings/mobile_sms/test', 'POST');
       mobileStatus.textContent = 'Test message dispatched to your mobile!';
     } catch (err) {
       mobileStatus.textContent = 'Test failed: ' + err.message;
@@ -156,7 +201,7 @@ if (tgTestBtn) {
   tgTestBtn.addEventListener('click', async () => {
     tgStatus.textContent = 'Sending test notification...';
     try {
-      await api('/api/settings/telegram', 'POST', JSON.stringify({ test: true }));
+      await api('/api/settings/telegram/test', 'POST');
       tgStatus.textContent = 'Test alert dispatched to Telegram!';
     } catch (err) {
       tgStatus.textContent = 'Test failed: ' + err.message;
@@ -513,6 +558,7 @@ async function history(){
     killBtn.style.color = '#ff7b72';
     killBtn.style.borderColor = '#ff7b7255';
     killBtn.style.marginLeft = 'auto';
+    killBtn.disabled = currentRole !== 'administrator' || !Number.isFinite(p.create_time);
     killBtn.title = 'Remote Active Response: Dispatch terminate signal to endpoint';
 
     killBtn.addEventListener('click', async (e) => {
@@ -520,7 +566,7 @@ async function history(){
       if (confirm(`Active Response: Send kill signal to terminate PID ${p.pid} (${pName}) on ${device}?`)) {
         killBtn.disabled = true;
         try {
-          await api('/api/devices/' + encodeURIComponent(device) + '/kill_process', 'POST', JSON.stringify({ pid: p.pid, name: pName }));
+          await api('/api/devices/' + encodeURIComponent(device) + '/kill_process', 'POST', JSON.stringify({ pid: p.pid, name: pName, create_time:p.create_time, path:p.exe }));
           alert(`Remote kill command queued for PID ${p.pid} (${pName}). The agent will terminate it on its next heartbeat.`);
         } catch (err) {
           killBtn.disabled = false;

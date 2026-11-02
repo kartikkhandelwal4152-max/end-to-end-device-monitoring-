@@ -254,14 +254,14 @@ td {
   <!-- High-level KPIs -->
   <div class="grid-metrics">
     <div class="metric-card">
-      <span class="label">Fleet Compliance Score</span>
+      <span class="label">Heuristic Risk Indicator</span>
       <div class="health-score">
         <div class="score-circle {% if summary.compliance_score < 60 %}score-danger{% elif summary.compliance_score < 80 %}score-warn{% endif %}">
           {{ summary.compliance_score }}%
         </div>
         <div>
-          <strong style="display:block; font-size:14px;">{% if summary.compliance_score >= 80 %}Healthy Posture{% elif summary.compliance_score >= 60 %}Moderate Risk{% else %}Immediate Action Required{% endif %}</strong>
-          <span class="subtext">Weighted by alert severity</span>
+          <strong style="display:block; font-size:14px;">{% if summary.compliance_score >= 80 %}Low Risk Profile{% elif summary.compliance_score >= 60 %}Moderate Risk{% else %}Action Required{% endif %}</strong>
+          <span class="subtext">Heuristic score; not an audited compliance standard</span>
         </div>
       </div>
     </div>
@@ -446,11 +446,7 @@ td {
             <td><code>{{ c.action }}</code></td>
             <td style="font-family:monospace;font-size:12px;">{{ c.payload }}</td>
             <td>
-              {% if c.executed %}
-              <span style="color:var(--green)">✓ Dispatched to Agent</span>
-              {% else %}
-              <span style="color:var(--orange)">⏳ Queued</span>
-              {% endif %}
+              {{ c.status }}{% if c.result %}: {{ c.result }}{% endif %}
             </td>
           </tr>
           {% endfor %}

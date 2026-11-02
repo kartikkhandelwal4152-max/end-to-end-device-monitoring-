@@ -1,0 +1,13 @@
+services:
+  sentinel:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      SENTINEL_DATA: /data
+      SENTINEL_ADMIN_PASSWORD: ${SENTINEL_ADMIN_PASSWORD:?Set an initial admin password privately}
+    volumes:
+      - sentinel-data:/data
+    restart: unless-stopped
+volumes:
+  sentinel-data:
