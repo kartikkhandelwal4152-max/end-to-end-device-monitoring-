@@ -18,3 +18,5 @@ services:
         value: FRIEND-MAC
       - key: SENTINEL_DEFAULT_TOKEN
         generateValue: true
+      - key: SENTINEL_BEHIND_PROXY
+        value: "true"
