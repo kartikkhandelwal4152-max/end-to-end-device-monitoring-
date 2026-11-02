@@ -1,17 +1,21 @@
 #!/bin/sh
 set -e
 
-DATA_DIR="${SENTINEL_DATA:-/data}"
+DATA_DIR="${SENTINEL_DATA:-/app/data}"
 mkdir -p "$DATA_DIR"
 
 # If config.json does not exist, initialize Sentinel backend
 if [ ! -f "$DATA_DIR/config.json" ]; then
     echo "============================================================"
     echo "===> Initializing Sentinel backend in $DATA_DIR..."
-    : "${SENTINEL_ADMIN_PASSWORD:?Set an initial admin password privately before first container start}"
-    python server.py --data-dir "$DATA_DIR" init >/dev/null
+    if [ -z "$SENTINEL_ADMIN_PASSWORD" ]; then
+        export SENTINEL_ADMIN_PASSWORD="Admin@Sentinel2026!"
+        echo "===> No SENTINEL_ADMIN_PASSWORD provided; using default initial password: Admin@Sentinel2026!"
+    fi
+    INIT_OUT=$(python server.py --data-dir "$DATA_DIR" init)
+    echo "$INIT_OUT"
     echo "============================================================"
-    echo "===> IMPORTANT: Sign in as admin with your configured initial password."
+    echo "===> Sign in as admin with password: ${SENTINEL_ADMIN_PASSWORD}"
     echo "============================================================"
 else
     echo "===> Existing Sentinel configuration and database found in $DATA_DIR."
