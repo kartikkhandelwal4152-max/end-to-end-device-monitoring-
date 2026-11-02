@@ -804,6 +804,9 @@ def validate(payload):
 
 def create_app(directory=DATA):
     directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    if not (directory / 'config.json').exists():
+        initialize(directory)
     config = json.loads((directory / 'config.json').read_text())
     path = directory / 'sentinel.db'
     with connect(path) as db:
