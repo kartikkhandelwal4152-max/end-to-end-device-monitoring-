@@ -1,5 +1,7 @@
 # Sentinel — endpoint monitoring prototype
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/kartikkhandelwal4152-max/end-to-end-device-monitoring-)
+
 Python endpoint agent → Flask/Waitress → SQLite → rules + Isolation Forest → browser dashboard.
 
 ## Local start
