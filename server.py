@@ -1599,6 +1599,33 @@ def create_app(directory=DATA):
             log_audit(db, getattr(g, 'current_user', 'admin'), 'create_user', username, 'success', f"Role: {role}")
         return jsonify(status='created', username=username, role=role), 201
 
+    @app.post('/api/users/<target_user>/password')
+    @viewer
+    def change_password(target_user):
+        target_user = target_user.strip().lower()
+        if getattr(g, 'current_role', '') != 'administrator' and target_user != getattr(g, 'current_user', ''):
+            abort(403, 'You may only change your own password.')
+        data = request.get_json(silent=True) or {}
+        new_password = str(data.get('password', ''))
+        if len(new_password) < 8:
+            abort(400, 'Password must be at least 8 characters long.')
+        now = time.time()
+        with connect(path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            user = db.execute("SELECT username FROM users WHERE username=?", (target_user,)).fetchone()
+            if not user:
+                abort(404, 'User not found.')
+            db.execute("UPDATE users SET password_hash=?, updated_at=? WHERE username=?",
+                       (hash_password(new_password), now, target_user))
+            tok = bearer()
+            if tok:
+                db.execute("UPDATE sessions SET revoked=1 WHERE username=? AND token_hash != ?",
+                           (target_user, digest(tok)))
+            else:
+                db.execute("UPDATE sessions SET revoked=1 WHERE username=?", (target_user,))
+            log_audit(db, getattr(g, 'current_user', 'admin'), 'change_password', target_user, 'success')
+        return jsonify(status='password_updated', username=target_user)
+
     @app.delete('/api/users/<user_to_delete>')
     @admin
     def delete_user(user_to_delete):
