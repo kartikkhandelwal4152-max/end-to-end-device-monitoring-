@@ -262,6 +262,7 @@ def get_recent_browser_history(limit=10, domain_only=True):
         candidates.extend(glob.glob(os.path.join(app_data, 'Mozilla/Firefox/Profiles/*/places.sqlite')))
 
     home = os.path.expanduser('~')
+    candidates.extend(glob.glob(os.path.join(home, 'Library/Safari/History.db')))
     candidates.extend(glob.glob(os.path.join(home, 'Library/Application Support/Google/Chrome/*/History')))
     candidates.extend(glob.glob(os.path.join(home, 'Library/Application Support/Microsoft Edge/*/History')))
     candidates.extend(glob.glob(os.path.join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/*/History')))
@@ -280,7 +281,17 @@ def get_recent_browser_history(limit=10, domain_only=True):
             shutil.copyfile(db_path, tmp_copy)
             conn = sqlite3.connect(tmp_copy, timeout=2)
             cur = conn.cursor()
-            if 'places.sqlite' in db_path:
+            if 'History.db' in db_path:
+                cur.execute('SELECT i.url, v.title, v.visit_time FROM history_visits v JOIN history_items i ON v.history_item = i.id ORDER BY v.visit_time DESC LIMIT ?', (limit,))
+                for row in cur.fetchall():
+                    raw_url = row[0]
+                    if raw_url:
+                        raw_ts = float(row[2]) if row[2] else 0
+                        ts = raw_ts + 978307200.0 if raw_ts else time.time()
+                        domain = extract_domain(raw_url)
+                        url_stored = f"https://{domain}/[path_redacted]" if domain_only and domain else raw_url[:250]
+                        history_items.append({'domain': domain, 'url': url_stored, 'title': (row[1] or '')[:150], 'visit_time': ts})
+            elif 'places.sqlite' in db_path:
                 cur.execute('SELECT url, title, last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL ORDER BY last_visit_date DESC LIMIT ?', (limit,))
                 for row in cur.fetchall():
                     raw_url = row[0]
@@ -377,8 +388,26 @@ def get_active_window():
     elif platform.system() == 'Darwin':
         try:
             import subprocess
+            try:
+                chrome_title = subprocess.check_output(
+                    ['osascript', '-e', 'tell application "Google Chrome" to get title of active tab of front window'],
+                    timeout=1, text=True, stderr=subprocess.DEVNULL
+                ).strip()
+                if chrome_title:
+                    return f"{chrome_title} - Google Chrome"[:200]
+            except Exception:
+                pass
+            try:
+                safari_title = subprocess.check_output(
+                    ['osascript', '-e', 'tell application "Safari" to get name of current tab of front window'],
+                    timeout=1, text=True, stderr=subprocess.DEVNULL
+                ).strip()
+                if safari_title:
+                    return f"{safari_title} - Safari"[:200]
+            except Exception:
+                pass
             script = 'tell application "System Events" to get name of first application process whose frontmost is true'
-            out = subprocess.check_output(['osascript', '-e', script], timeout=2, text=True, stderr=subprocess.DEVNULL).strip()
+            out = subprocess.check_output(['osascript', '-e', script], timeout=1, text=True, stderr=subprocess.DEVNULL).strip()
             return out[:200] if out else None
         except Exception:
             return None
