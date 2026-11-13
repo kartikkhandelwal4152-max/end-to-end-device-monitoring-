@@ -720,6 +720,7 @@ def main():
     parser.add_argument('--full-urls', action='store_true', help='Collect full URLs rather than domain-only')
     parser.add_argument('--collect-cmdline', action='store_true', help='Collect redacted process command lines')
     parser.add_argument('--process-limit', type=int, default=100, help='Max process inventory per sample')
+    parser.add_argument('--insecure-ssl', action='store_true', help='Disable TLS certificate verification for legacy LibreSSL/macOS environments')
     parser.add_argument('--uninstall', action='store_true', help='Safely uninstall and remove local sentinel data directory (~/.sentinel)')
     args = parser.parse_args()
 
@@ -751,6 +752,22 @@ def main():
         domain_only_history=not args.full_urls,
         collect_cmdline=args.collect_cmdline
     )
+    ca_bundle = args.ca
+    if not ca_bundle:
+        if args.insecure_ssl or os.environ.get('SENTINEL_INSECURE_TLS') == '1':
+            ca_bundle = False
+            try:
+                import urllib3
+                urllib3.disable_warnings()
+            except Exception:
+                pass
+        else:
+            try:
+                import certifi
+                ca_bundle = certifi.where()
+            except Exception:
+                ca_bundle = True
+
     session = requests.Session()
     session.headers.update({'Authorization': 'Bearer '+token, 'X-Device-ID': args.device})
     receipts_dir = Path.home() / '.sentinel' / hashlib.sha256(args.server.encode()).hexdigest()[:16]
@@ -769,7 +786,7 @@ def main():
                     response = session.post(
                         args.server.rstrip('/') + '/api/telemetry',
                         json=entry['payload'],
-                        verify=args.ca or True,
+                        verify=ca_bundle,
                         timeout=10,
                         allow_redirects=False
                     )
@@ -792,7 +809,7 @@ def main():
                             ack_res = session.post(
                                 args.server.rstrip('/') + f"/api/commands/{unacked['id']}/ack",
                                 json={'status': unacked['status'], 'result': unacked['result']},
-                                verify=args.ca or True,
+                                verify=ca_bundle,
                                 timeout=5, allow_redirects=False
                             )
                             if ack_res.status_code == 200:
@@ -836,7 +853,7 @@ def main():
                                 ack_res = session.post(
                                     args.server.rstrip('/') + f"/api/commands/{cmd_id}/ack",
                                     json={'status': rec['status'], 'result': rec['result']},
-                                    verify=args.ca or True,
+                                    verify=ca_bundle,
                                     timeout=5, allow_redirects=False
                                 )
                                 if ack_res.status_code == 200:
