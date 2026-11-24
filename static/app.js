@@ -347,6 +347,35 @@ async function refresh(){
       });
       actionTd.append(warnBtn);
 
+      const shutBtn = text('button', '🚨 Shutdown', 'secondary');
+      shutBtn.style.padding = '4px 8px';
+      shutBtn.style.fontSize = '11px';
+      shutBtn.style.marginRight = '6px';
+      shutBtn.style.color = '#ff6b6b';
+      shutBtn.style.borderColor = '#ff444466';
+      shutBtn.style.fontWeight = 'bold';
+      shutBtn.title = 'Force immediate emergency shutdown on ' + d.id + ' to contain active ransomware/file corruption';
+      shutBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const defaultReason = 'Active malware corruption / emergency containment';
+        if(confirm('🚨 EMERGENCY SHUTDOWN CONFIRMATION:\n\nTrigger an IMMEDIATE FORCED SHUTDOWN on endpoint "' + d.id + '"?\n\nThis will immediately power off the PC to stop ransomware/wiper malware from corrupting or destroying more files.')) {
+          const reason = prompt('Reason for emergency shutdown (logged in audit trail):', defaultReason);
+          if (reason && reason.trim()) {
+            shutBtn.disabled = true;
+            try {
+              await api('/api/devices/' + encodeURIComponent(d.id) + '/emergency_shutdown', 'POST', JSON.stringify({ reason: reason.trim() }));
+              alert('🚨 Emergency shutdown command dispatched to ' + d.id + '!\n\nThe endpoint will power off immediately upon receiving the signal.');
+              await refresh();
+            } catch(err) {
+              alert('Failed to dispatch emergency shutdown: ' + err.message);
+            } finally {
+              shutBtn.disabled = false;
+            }
+          }
+        }
+      });
+      actionTd.append(shutBtn);
+
       const delBtn = text('button', 'Delete', 'secondary');
       delBtn.style.padding = '4px 8px';
       delBtn.style.fontSize = '11px';

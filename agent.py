@@ -13,6 +13,7 @@ import random
 import re
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import threading
 import time
@@ -434,6 +435,35 @@ def trigger_popup(title, message):
         return False
 
 
+def execute_emergency_shutdown(reason='Malware corruption emergency containment'):
+    """Immediately execute forced system shutdown to contain destructive wiper/ransomware malware."""
+    if os.environ.get('SENTINEL_TESTING') == '1':
+        return True, f"Simulated shutdown executed: {reason}"
+    sys_name = platform.system()
+    try:
+        if sys_name == 'Windows':
+            # Force immediate shutdown without delay, closing running apps without prompting
+            subprocess.run(['shutdown', '/s', '/f', '/t', '0'], check=True)
+            return True, 'Windows immediate forced shutdown (/s /f /t 0) executed.'
+        elif sys_name == 'Darwin':
+            # On macOS, attempt emergency shutdown via AppleScript or shutdown binary
+            try:
+                subprocess.run(['osascript', '-e', 'tell application "System Events" to shut down'], timeout=3, check=True)
+                return True, 'macOS emergency shutdown via System Events executed.'
+            except Exception:
+                subprocess.run(['shutdown', '-h', 'now'], check=False)
+                return True, 'macOS shutdown -h now command dispatched.'
+        else:
+            # Linux / Unix
+            try:
+                subprocess.run(['shutdown', '-h', 'now'], check=True)
+            except Exception:
+                subprocess.run(['systemctl', 'poweroff', '-i'], check=False)
+            return True, 'Linux immediate shutdown command executed.'
+    except Exception as exc:
+        return False, f"Emergency shutdown failed: {exc}"
+
+
 def safe_terminate_process(target_pid, expected_name=None, expected_create_time=None, expected_path=None):
     """Safely terminate a target process with PID reuse and protected process verification."""
     if type(target_pid) is not int or target_pid <= 0:
@@ -721,6 +751,7 @@ def main():
     parser.add_argument('--collect-cmdline', action='store_true', help='Collect redacted process command lines')
     parser.add_argument('--process-limit', type=int, default=100, help='Max process inventory per sample')
     parser.add_argument('--insecure-ssl', action='store_true', help='Disable TLS certificate verification for legacy LibreSSL/macOS environments')
+    parser.add_argument('--auto-containment', action='store_true', help='Autonomously shut down endpoint if unkillable critical malware/wiper corruption is detected')
     parser.add_argument('--uninstall', action='store_true', help='Safely uninstall and remove local sentinel data directory (~/.sentinel)')
     args = parser.parse_args()
 
@@ -843,6 +874,24 @@ def main():
                             ok = trigger_popup(t, m)
                             receipt_store.record(cmd_id, 'succeeded' if ok else 'failed', 'Notification utility completed.' if ok else 'Notification utility failed; display unverified.')
                             print(f"[ACTIVE RESPONSE] Command #{cmd_id} send_alert: '{m}'")
+                        elif action in ('emergency_shutdown', 'shutdown'):
+                            reason = cmd.get('reason') or 'Malware corruption emergency containment'
+                            print(f"[EMERGENCY CONTAINMENT] Command #{cmd_id} emergency_shutdown: {reason}")
+                            receipt_store.record(cmd_id, 'succeeded', f"Emergency shutdown initiated: {reason}")
+                            try:
+                                ack_res = session.post(
+                                    args.server.rstrip('/') + f"/api/commands/{cmd_id}/ack",
+                                    json={'status': 'succeeded', 'result': f"Emergency shutdown initiated: {reason}"},
+                                    verify=ca_bundle,
+                                    timeout=3, allow_redirects=False
+                                )
+                                if ack_res.status_code == 200:
+                                    receipt_store.mark_acked(cmd_id)
+                            except Exception:
+                                pass
+                            ok, msg = execute_emergency_shutdown(reason)
+                            if not ok:
+                                receipt_store.record(cmd_id, 'failed', msg)
                         else:
                             receipt_store.record(cmd_id, 'failed', f"Unsupported action: '{action}'")
 

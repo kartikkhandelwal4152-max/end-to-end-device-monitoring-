@@ -1279,6 +1279,29 @@ def create_app(directory=DATA):
             cmd_id = cur.lastrowid
         return jsonify(status='queued', command_id=cmd_id, device=device, message=message)
 
+    @app.post('/api/devices/<device>/emergency_shutdown')
+    @analyst
+    def emergency_shutdown_device(device):
+        data = request.get_json(silent=True) or {}
+        reason = str(data.get('reason', 'Malware corruption emergency containment')).strip()[:500]
+        now = time.time()
+        with connect(path) as db:
+            known = db.execute('SELECT id FROM devices WHERE id=?', (device,)).fetchone()
+            if not known:
+                abort(404, 'Device not found.')
+            cmd_payload = json.dumps({'reason': reason, 'force': True})
+            ttl = 180.0
+            cur = db.execute(
+                'INSERT INTO commands(device_id, action, payload, created, expires_at, status, attempts, updated_at) VALUES (?,?,?,?,?,?,?,?)',
+                (device, 'emergency_shutdown', cmd_payload, now, now + ttl, 'queued', 0, now)
+            )
+            cmd_id = cur.lastrowid
+            log_audit(db, getattr(g, 'current_user', 'analyst'), 'emergency_shutdown', device, 'queued',
+                      f"Reason: {reason}", request.remote_addr)
+            alert(db, device, now, 'emergency_containment', 'critical',
+                  f"[Emergency Containment] Immediate shutdown command #{cmd_id} queued for '{device}'. Reason: {reason}")
+        return jsonify(status='queued', command_id=cmd_id, device=device, action='emergency_shutdown', reason=reason)
+
     @app.get('/api/settings/telegram')
     @admin
     def get_telegram_settings():
